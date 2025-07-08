@@ -176,6 +176,7 @@ namespace TensileLite
             size_t best_split   = 1;
             double best_latency = std::numeric_limits<double>::infinity();
 
+            bool emulate_tf32=false;
             for(size_t split = 1; split <= MAX_SPLIT; ++split)
             {
                 double latency = compute_total_latency(hardware,
@@ -198,6 +199,7 @@ namespace TensileLite
                                                        element_size_out, //ElementSizeout
                                                        WGM,
                                                        mx_block_size,
+                                                       emulate_tf32,
                                                        debug);
 
                 if(latency < best_latency)
@@ -230,6 +232,9 @@ namespace TensileLite
                                                              bool   print,
                                                              size_t WGM)
         {
+
+            //Default Emulate tf32 to false.
+            bool emulate_tf32=false;
             std::vector<ResultTuple> valid_results;
             valid_results.reserve(MT_list.size());
 
@@ -250,6 +255,7 @@ namespace TensileLite
                               << ", MI_K=" << MI_K << "\n";
                 }
 
+                
                 size_t split = 1;
                 if(check_LDS_capacity(hardware, MT_M, MT_N, MT_K, element_size_A, debug))
                 {
@@ -273,6 +279,7 @@ namespace TensileLite
                                                                  element_size_out,
                                                                  WGM,
                                                                  mx_block_size,
+                                                                 emulate_tf32,
                                                                  debug);
 
                     valid_results.emplace_back(Total_latency, MT_M, MT_N, MT_K, MI_M, MI_N, MI_K, occupancy);
@@ -481,6 +488,7 @@ namespace TensileLite
                 std::function<double(size_t, size_t, size_t, size_t, size_t, size_t, Hardware&)>
                     tie_breaker_fn)
         {
+            bool emulate_tf32=false;
             std::vector<std::tuple<double, size_t, size_t, size_t, size_t, size_t, size_t>> results;
 
             typedef std::tuple<double, size_t, size_t, size_t, size_t, size_t, size_t> ResultTuple;
@@ -526,6 +534,7 @@ namespace TensileLite
                                                 element_size * 8, //Element Size out
                                                 WGM, //WGM
                                                 mx_block_size, //mx_block_size
+                                                emulate_tf32,
                                                 debug); //debug
 
                     results.push_back(

@@ -34,7 +34,7 @@
 #include <iostream>
 #include <set>
 #include <tuple>
-
+#include <string>
 namespace TensileLite
 {
     namespace analytical
@@ -80,6 +80,16 @@ namespace TensileLite
             return numerator / denominator;
         }
 
+
+        bool is_tf32_emulation_enabled() {
+            const char* env = std::getenv("ORIGAMI_USE_TF32");
+            if (!env) return false;
+
+            std::string val(env);
+            std::transform(val.begin(), val.end(), val.begin(), ::tolower);
+            return val == "1" || val == "true" || val == "yes";
+        }
+
         // Determine the compute latency per MT_MxMT_NxMT_K Macro Tile (L_MT).
         size_t compute_mt_compute_latency(const Hardware& hardware,
                                           size_t          M,
@@ -95,15 +105,36 @@ namespace TensileLite
                                           size_t          MI_K,
                                           size_t          element_size_A,
                                           size_t          element_size_B,
+                                          bool            emulate_tf32,
                                           bool            debug)
         {
 
             // Compute the number of matrix instructions
+
+            
             size_t N_MI = compute_number_matrix_instructions(
                 hardware, MT_M, MT_N, MT_K, MI_M, MI_N, MI_K, debug);
             // Latency of a single MT_MxMT_NxMT_k tile is the latency of one MI multiplied by number of MI per MT_MxMT_NxMT_k.
             size_t L_MI = hardware.get_MI_latency(
                 MI_M, MI_N, MI_K, std::max(element_size_A, element_size_B));
+            
+
+
+            bool tf32_emulation = is_tf32_emulation_enabled();
+            //Special Logic for handling TF32 emulation using 3x bf16 multiply accumulates.
+            if(tf32_emulation && (element_size_A == 32 || element_size_B == 32))
+            {
+                //The TF32 emulation dataflow is as follows:
+                //Take (as input per workgroup) a tile of dimensionality (MT_MxMT_NxMT_K)
+                //Break the two input tiles in f32 (MT_MxMT_K and MT_NxMT_K) into two bf16 partials
+                //The bf16 partials are a_1|a_0 and b_1|b_0 respectively, with b_1 being most significant.
+                //We would normally multiply accumulate the cross product (4 tile multiplies) into the output (MT_MxMT_N)
+                //If we are willing to tolerate a minor loss of accuracy, we can do this with 3 of the 4 multiplies instead.
+                //This means we will do 3x the number of MFMA operations
+                N_MI = 3 * N_MI; //We are going to emulate
+                L_MI = hardware.get_MI_latency(
+                MI_M, MI_N, MI_K, 16);
+            }
 
             // size_t mt_arith = arithmetic_intensity(MT_M, MT_N, MT_K, 2);
             // printf("MT_M:%d MT_N:%d MT_K:%d arith:%d\n", MT_M, MT_N, MT_K, mt_arith);
@@ -451,6 +482,7 @@ namespace TensileLite
                                     size_t          element_size_B,
                                     size_t          element_size_out,
                                     size_t          mx_block_size,
+                                    bool emulate_tf32,
                                     bool            debug)
         {
             // 1) Compute per-tile latencies
@@ -468,6 +500,7 @@ namespace TensileLite
                                                           MI_K,
                                                           element_size_A,
                                                           element_size_B,
+                                                          emulate_tf32,
                                                           debug);
 
             double L_mem = compute_memory_latency(hardware,
@@ -717,6 +750,7 @@ namespace TensileLite
                                     size_t          element_size_B,
                                     size_t          element_size_out,
                                     size_t          mx_block_size,
+                                    bool emulate_tf32,
                                     bool            debug)
         {
             // Assume latency of a wave is latency of a single k-complete output tile.
@@ -740,6 +774,7 @@ namespace TensileLite
                                                  element_size_B,
                                                  element_size_out,
                                                  mx_block_size,
+                                                 emulate_tf32,
                                                  debug);
 
             return L_wave;
@@ -767,6 +802,7 @@ namespace TensileLite
                                      size_t          element_size_out,
                                      int             WGM,
                                      size_t          mx_block_size,
+                                     bool            emulate_tf32,
                                      bool            debug)
         {
 
@@ -798,6 +834,7 @@ namespace TensileLite
                                                  element_size_B,
                                                  element_size_out,
                                                  mx_block_size,
+                                                 emulate_tf32,
                                                  debug);
             // Compute latency for all waves and return it as the latency for the MT/problem
             double total_latency = L_wave * N_waves;
@@ -838,6 +875,7 @@ namespace TensileLite
             double cycles_per_second
                 = hardware.compute_clock_ghz * 1e9; // 1 GHz = 1e9 cycles per second
             size_t mx_block_size      = 0;
+            bool emulate_tf32=false;
             double latency_cycles     = compute_total_latency(hardware,
                                                           M,
                                                           N,
@@ -858,6 +896,7 @@ namespace TensileLite
                                                           element_size_out,
                                                           WGM,
                                                           mx_block_size,
+                                                          emulate_tf32,
                                                           debug);
             double total_time_seconds = latency_cycles / cycles_per_second;
             // Compute performance in FLOPS

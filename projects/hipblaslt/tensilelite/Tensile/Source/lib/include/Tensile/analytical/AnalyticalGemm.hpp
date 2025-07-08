@@ -74,6 +74,7 @@ namespace TensileLite
                                           size_t          MI_K,
                                           size_t          element_size_A, //In bits
                                           size_t          element_size_B, //In bits,
+                                          bool            emulate_tf32,
                                           bool            debug);
 
         // Computes the number of MT timesteps required to compute all MT. Last wave may be less occupied.
@@ -136,6 +137,7 @@ namespace TensileLite
                                     size_t          element_size_B, //In bits,
                                     size_t          element_size_out, //In bits
                                     size_t          mx_block_size,
+                                    bool emulate_tf32,
                                     bool            debug);
 
         double estimate_l2_hit(const Hardware& hardware,
@@ -179,6 +181,7 @@ namespace TensileLite
                                     size_t          element_size_B, //In bits,
                                     size_t          element_size_out, //In bits
                                     size_t          mx_block_size,
+                                    bool emulate_tf32,
                                     bool            debug);
 
         // Compute the total latency of a gemm based on the latency of one wave multiplied by the number of waves
@@ -203,6 +206,7 @@ namespace TensileLite
                                      size_t          element_size_out, //In bits
                                      int             WGM,
                                      size_t          mx_block_size,
+                                     bool emulate_tf32,
                                      bool            debug);
 
         // Compute the performance from the latency.
