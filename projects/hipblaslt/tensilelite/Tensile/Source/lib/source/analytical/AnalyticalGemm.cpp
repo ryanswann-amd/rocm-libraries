@@ -776,6 +776,15 @@ namespace TensileLite
                                      bool            debug)
         {
 
+
+            //Override dot2 matrix instruction with vector lane widths.
+            if(MI_N ==0 && MI_M == 0 && MI_K == 0)
+            {
+                MI_M = 1;
+                MI_K = 64;
+                MI_N = 1;
+            }
+
             //Enable Customized Heuristics.
             bool enable_heuristics = true;
             size_t active_cu = compute_active_CU(hardware, M, N, batch, MT_M, MT_N);
@@ -976,6 +985,8 @@ namespace TensileLite
                 }
 
                 //Bias towards minimizing tile quantization in Each Dimension
+                //Matrix instruction dimension or less should be 1 (at that points, its MI quantization and relatively unavoidable)
+                //If macro tile is larger than matrix instruction, penalize the unnecessary tile quantization.
                 if(K < MI_K && MT_K != MI_K)
                 {
                     total_latency = total_latency * safe_ceil_div(MT_K,MI_K);
@@ -983,12 +994,12 @@ namespace TensileLite
 
                 if(M<MI_M && MT_M != MI_M)
                 {
-                    total_latency = total_latency * 4;
+                    total_latency = total_latency * safe_ceil_div(MT_M,MI_M);
                 }
 
                 if(N<MI_N && MT_N != MI_N)
                 {
-                    total_latency = total_latency * 4;
+                    total_latency = total_latency * safe_ceil_div(MT_N,MI_N);
                 }
 
 
