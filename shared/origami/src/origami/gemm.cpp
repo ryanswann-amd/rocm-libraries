@@ -733,8 +733,8 @@ double compute_total_latency(const hardware_t& hardware, size_t M, size_t N, siz
     //     total_latency = total_latency * 0.95;
     // }
 
-    // This kernel is more optimized in triton
-    if (MT_M == 256 && MT_N == 256 && MT_K == 64) {
+    // This kernel is more optimized in triton on MI300X
+    if (MT_M == 256 && MT_N == 256 && MT_K == 64 && hardware.N_CU == 304) {
         total_latency = total_latency * 0.75;
     }
 
