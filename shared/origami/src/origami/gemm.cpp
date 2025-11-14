@@ -1407,6 +1407,35 @@ namespace origami
             }
         }
 
+
+        if(hardware.arch == hardware_t::architecture_t::gfx942 && heuristics)
+        {
+            if(MT_M==128 && MT_N == 272 &&  MT_K == 64 && transA && !transB)
+            {
+                total_latency = total_latency * 10;
+            }
+            
+            if(MT_M==128 && MT_N == 128 &&  MT_K == 128 && transA && !transB)
+            {
+                total_latency = total_latency * 10;
+            }
+
+
+            if(MT_M==256 && MT_N == 256 &&  MT_K == 64 && transA && !transB)
+            {
+                total_latency = total_latency * 10;
+            }
+
+            if(MT_M==384 && MT_N == 128 &&  MT_K == 64 && transA && !transB)
+            {
+                total_latency = total_latency * 10;
+            }
+            if(MT_M==128 && MT_N == 384 &&  MT_K == 64 && transA && !transB)
+            {
+                total_latency = total_latency * 10;
+            }
+        }
+
         if(hardware_t::is_debug_enabled())
         {
             hardware.log_debug("Total_latency (with heuristics)", total_latency);
