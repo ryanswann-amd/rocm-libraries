@@ -1160,10 +1160,9 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   const size_t G = grouped_problem.groups.size();
   if (G == 0) return 0.0;
 
-  // Single group degenerates to regular GEMM
-  if (G == 1) {
-    return compute_total_latency(grouped_problem.groups[0], hardware, config, max_cus);
-  }
+  // NOTE: G==1 no longer short-circuits to compute_total_latency() because
+  // the grouped GEMM kernel is always used (even for 1 group) and its
+  // overhead profile differs from the individual hipBLASLt path.
 
   const size_t MT_M = config.mt.m;
   const size_t MT_N = config.mt.n;
