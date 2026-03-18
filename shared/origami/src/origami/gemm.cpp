@@ -1217,10 +1217,15 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   double concurrent_groups = estimate_concurrent_groups(grouped_problem, hardware, config);
 
   // 4) Compute per-group tile latency with degraded cache reuse.
-  //    Each group sees reduced effective CUs because concurrent groups pollute each other's caches.
-  //    This mirrors how batch GEMM reduces effective_cus by dividing by batch count.
+  //    Cache degradation from concurrent groups is dampened: real groups
+  //    share L2/MALL but the penalty is less than 1/concurrent_groups
+  //    because (a) compute-bound shapes are less cache-sensitive, and
+  //    (b) sequential tile layout means groups don't fully overlap.
+  //    Use geometric mean between full CUs and degraded CUs.
+  double degraded_cus = static_cast<double>(num_active_cus) / concurrent_groups;
+  double full_cus = static_cast<double>(num_active_cus);
   size_t effective_cus_per_group = std::max(
-      static_cast<size_t>(static_cast<double>(num_active_cus) / concurrent_groups),
+      static_cast<size_t>(std::sqrt(degraded_cus * full_cus)),
       static_cast<size_t>(1));
 
   // Use default WGM from first group (matches hipblaslt's behavior of using problems[0])
