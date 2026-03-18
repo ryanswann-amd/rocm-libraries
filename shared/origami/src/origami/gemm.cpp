@@ -1169,20 +1169,20 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   const size_t MT_N = config.mt.n;
 
   // Grouped GEMM kernel overhead constants (in cycles).
-  // Empirically calibrated on MI350X (gfx950) at 2.2 GHz.
+  // Empirically calibrated on MI300X (gfx942) with tritonBLAS backend.
   //
   // Grouped kernels have higher launch cost than individual GEMMs due to:
   // - wgTable construction and argument packing per group
   // - Larger code object with group dispatch logic
   // - Per-group argument fetch and pointer resolution inside the kernel
   //
-  // Calibration: MI350X grouped_mm with tiny groups (64x64x64):
+  // Calibration: MI300X grouped_mm with tritonBLAS:
   //   - Individual kernel launch floor: ~11 us = ~24,400 cycles
-  //   - Grouped kernel base overhead: ~36 us = ~79,200 cycles
-  //   - Per-group marginal cost: ~4.5 us = ~9,900 cycles
-  //   - Grouped extra vs individual: ~25 us = ~54,800 cycles
-  const double grouped_kernel_base_overhead = 54800.0;  // extra over individual launch
-  const double per_group_overhead           =  9900.0;  // per group inside the kernel
+  //   - Grouped kernel base overhead: ~125 us = ~250,000 cycles
+  //   - Per-group marginal cost: ~30 us = ~60,000 cycles
+  //   - Grouped extra vs individual: ~114 us = ~250,000 cycles
+  const double grouped_kernel_base_overhead = 250000.0;  // extra over individual launch
+  const double per_group_overhead           =  60000.0;  // per group inside the kernel
 
   // 1) Compute per-group tile counts and total tiles
   std::vector<size_t> tiles_per_group(G);
