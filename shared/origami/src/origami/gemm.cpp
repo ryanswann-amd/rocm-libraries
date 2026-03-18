@@ -1195,6 +1195,18 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
     total_tiles += tiles_per_group[g];
   }
 
+  // Load imbalance factor: heterogeneous groups waste CU cycles when
+  // large groups finish before small ones (or vice versa). The penalty
+  // scales with how uneven the group sizes are.
+  // imbalance = max(tiles_per_group) / avg(tiles_per_group)
+  // For equal groups: imbalance = 1.0 (no penalty)
+  // For very unequal: imbalance > 1.0 (penalty applied)
+  double avg_tiles = static_cast<double>(total_tiles) / static_cast<double>(G);
+  double max_tiles = static_cast<double>(*std::max_element(tiles_per_group.begin(), tiles_per_group.end()));
+  double imbalance_ratio = (avg_tiles > 0) ? max_tiles / avg_tiles : 1.0;
+  // Dampen the penalty: sqrt provides diminishing returns for extreme imbalance
+  double imbalance_factor = std::sqrt(imbalance_ratio);
+
   if (total_tiles == 0) return 0.0;
 
   // 2) Compute timesteps (data-parallel, no StreamK for grouped GEMM)
@@ -1246,7 +1258,7 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   // 6) Total latency = compute + overhead
   //    Compute: weighted tile latency * number of timesteps
   //    Overhead: grouped kernel base + per-group marginal cost
-  double compute_latency = weighted_latency * static_cast<double>(num_timesteps);
+  double compute_latency = weighted_latency * static_cast<double>(num_timesteps) * imbalance_factor;
   double overhead = grouped_kernel_base_overhead + per_group_overhead * static_cast<double>(G);
   double total_latency = compute_latency + overhead;
 
