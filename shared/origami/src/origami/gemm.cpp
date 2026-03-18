@@ -1168,6 +1168,22 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   const size_t MT_M = config.mt.m;
   const size_t MT_N = config.mt.n;
 
+  // Grouped GEMM kernel overhead constants (in cycles).
+  // Empirically calibrated on MI300X (gfx942) with tritonBLAS backend.
+  //
+  // Grouped kernels have higher launch cost than individual GEMMs due to:
+  // - wgTable construction and argument packing per group
+  // - Larger code object with group dispatch logic
+  // - Per-group argument fetch and pointer resolution inside the kernel
+  //
+  // Calibration: MI300X grouped_mm with tritonBLAS:
+  //   - Individual kernel launch floor: ~11 us = ~24,400 cycles
+  //   - Grouped kernel base overhead: ~125 us = ~250,000 cycles
+  //   - Per-group marginal cost: ~30 us = ~60,000 cycles
+  //   - Grouped extra vs individual: ~114 us = ~250,000 cycles
+  const double grouped_kernel_base_overhead = 250000.0;  // extra over individual launch
+  const double per_group_overhead           =  60000.0;  // per group inside the kernel
+
   // 1) Compute per-group tile counts and total tiles
   std::vector<size_t> tiles_per_group(G);
   size_t total_tiles = 0;
@@ -1177,25 +1193,6 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
     size_t mt_n = math::safe_ceil_div(prob.size.n, MT_N);
     tiles_per_group[g] = mt_m * mt_n * prob.batch;
     total_tiles += tiles_per_group[g];
-  }
-
-  // Calibrated on MI300X (gfx942) with tritonBLAS grouped GEMM kernels.
-  // Base overhead reduced from 250k because large compute-heavy groups
-  // show the 250k base overpredicts (the base includes some per-group
-  // work that should scale). Per-group overhead varies with per-group
-  // tile count: small groups have less cache/scheduling overhead than
-  // large groups.
-  const double grouped_kernel_base_overhead = 200000.0;
-
-  // Size-dependent per-group overhead
-  double avg_tiles_per_group = static_cast<double>(total_tiles) / static_cast<double>(G);
-  double per_group_cost;
-  if (avg_tiles_per_group < 16) {
-      per_group_cost = 35000.0;   // small groups: less cache disruption
-  } else if (avg_tiles_per_group < 64) {
-      per_group_cost = 60000.0;   // medium groups
-  } else {
-      per_group_cost = 50000.0;   // large groups: amortized but more cache pressure
   }
 
   if (total_tiles == 0) return 0.0;
@@ -1250,7 +1247,7 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   //    Compute: weighted tile latency * number of timesteps
   //    Overhead: grouped kernel base + per-group marginal cost
   double compute_latency = weighted_latency * static_cast<double>(num_timesteps);
-  double overhead = grouped_kernel_base_overhead + per_group_cost * static_cast<double>(G);
+  double overhead = grouped_kernel_base_overhead + per_group_overhead * static_cast<double>(G);
   double total_latency = compute_latency + overhead;
 
   if (debug) {
