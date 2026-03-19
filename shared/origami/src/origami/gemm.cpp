@@ -1269,7 +1269,7 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   //  metadata indirection, and cache effects. Calibrated against optimized
   //  tritonBLAS kernel on MI300X: large shapes under-predicted by 30-40%
   //  without this factor.
-  constexpr double grouped_compute_efficiency = 1.50;
+  constexpr double grouped_compute_efficiency = 1.55;
   double compute_latency = weighted_latency * static_cast<double>(num_timesteps) * imbalance_factor * grouped_compute_efficiency;
   // G=1: no group management overhead, just kernel launch + persistent scheduling.
   // G>=2: full grouped overhead model (base + per_group * G).
