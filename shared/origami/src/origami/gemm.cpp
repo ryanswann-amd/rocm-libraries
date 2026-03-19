@@ -1263,7 +1263,14 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   // 6) Total latency = compute + overhead
   //    Compute: weighted tile latency * number of timesteps
   //    Overhead: grouped kernel base + per-group marginal cost
-  double compute_latency = weighted_latency * static_cast<double>(num_timesteps) * imbalance_factor;
+  //
+  //  grouped_compute_efficiency: the grouped kernel's K-loop runs slower
+  //  than the raw compute model predicts due to memory system contention,
+  //  metadata indirection, and cache effects. Calibrated against optimized
+  //  tritonBLAS kernel on MI300X: large shapes under-predicted by 30-40%
+  //  without this factor.
+  constexpr double grouped_compute_efficiency = 1.50;
+  double compute_latency = weighted_latency * static_cast<double>(num_timesteps) * imbalance_factor * grouped_compute_efficiency;
   double overhead = grouped_kernel_base_overhead + per_group_overhead * static_cast<double>(G);
   double total_latency = compute_latency + overhead;
 
