@@ -1271,7 +1271,14 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   //  without this factor.
   constexpr double grouped_compute_efficiency = 1.50;
   double compute_latency = weighted_latency * static_cast<double>(num_timesteps) * imbalance_factor * grouped_compute_efficiency;
-  double overhead = grouped_kernel_base_overhead + per_group_overhead * static_cast<double>(G);
+  // G=1: no group management overhead, just kernel launch + persistent scheduling.
+  // G>=2: full grouped overhead model (base + per_group * G).
+  double overhead;
+  if (G == 1) {
+    overhead = 45000.0;
+  } else {
+    overhead = grouped_kernel_base_overhead + per_group_overhead * static_cast<double>(G);
+  }
   double total_latency = compute_latency + overhead;
 
   if (debug) {
