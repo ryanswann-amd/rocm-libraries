@@ -1179,10 +1179,11 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   // (cached selectors, torch.bmm for homogeneous, packed metadata,
   //  store modulo removal, EVEN_M constexpr)
   //   - Individual kernel launch floor: ~11 us = ~24,400 cycles
-  //   - Grouped kernel base overhead: ~29 us = ~60,000 cycles
-  //   - Per-group marginal cost: ~8.6 us = ~18,000 cycles
-  const double grouped_kernel_base_overhead =  60000.0;  // extra over individual launch
-  const double per_group_overhead           =  18000.0;  // per group inside the kernel
+  //   - Grouped kernel base overhead: ~21 us = ~45,000 cycles
+  //   - Per-group marginal cost: ~10.5 us = ~22,000 cycles
+  //   Shifted from base to per_group to reduce G=1 overhead (single 1024 outlier)
+  const double grouped_kernel_base_overhead =  45000.0;  // extra over individual launch
+  const double per_group_overhead           =  22000.0;  // per group inside the kernel
 
   // 1) Compute per-group tile counts and total tiles
   std::vector<size_t> tiles_per_group(G);
