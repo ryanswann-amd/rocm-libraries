@@ -1195,6 +1195,21 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
     total_tiles += tiles_per_group[g];
   }
 
+  // Check if all groups are homogeneous (same dimensions) — the optimized
+  // tritonBLAS kernel dispatches homogeneous G>=4 via torch.bmm (single
+  // kernel launch) vs the fused persistent kernel for heterogeneous groups.
+  bool is_homogeneous = true;
+  if (G > 1) {
+    const auto& first = grouped_problem.groups[0];
+    for (size_t g = 1; g < G; ++g) {
+      const auto& grp = grouped_problem.groups[g];
+      if (grp.size.m != first.size.m || grp.size.n != first.size.n || grp.size.k != first.size.k) {
+        is_homogeneous = false;
+        break;
+      }
+    }
+  }
+
   // Load imbalance factor: heterogeneous groups waste CU cycles when
   // large groups finish before small ones (or vice versa). The penalty
   // scales with how uneven the group sizes are.
@@ -1271,11 +1286,16 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   //  without this factor.
   constexpr double grouped_compute_efficiency = 1.50;
   double compute_latency = weighted_latency * static_cast<double>(num_timesteps) * imbalance_factor * grouped_compute_efficiency;
-  // G=1: no group management overhead, just kernel launch + persistent scheduling.
-  // G>=2: full grouped overhead model (base + per_group * G).
+  // Dispatch-aware overhead model:
+  //   G=1: no group management, just kernel launch
+  //   Homogeneous G>=4: dispatched via torch.bmm (single kernel launch, lower overhead)
+  //   Otherwise: fused persistent kernel (full grouped overhead)
   double overhead;
   if (G == 1) {
     overhead = 45000.0;
+  } else if (is_homogeneous && G >= 4) {
+    // bmm path: single kernel launch + output split
+    overhead = 30000.0 + 5000.0 * static_cast<double>(G);
   } else {
     overhead = grouped_kernel_base_overhead + per_group_overhead * static_cast<double>(G);
   }
