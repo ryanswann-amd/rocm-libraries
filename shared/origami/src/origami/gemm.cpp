@@ -1275,7 +1275,7 @@ double compute_total_latency_grouped(const grouped_problem_t& grouped_problem,
   // G>=2: full grouped overhead model (base + per_group * G).
   double overhead;
   if (G == 1) {
-    overhead = 40000.0;
+    overhead = 45000.0;
   } else {
     overhead = grouped_kernel_base_overhead + per_group_overhead * static_cast<double>(G);
   }
