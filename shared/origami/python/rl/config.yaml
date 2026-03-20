@@ -1,0 +1,44 @@
+# Origami RL Trainer Configuration
+bench:
+  # Path to hipblaslt-bench binary — override with --bench flag
+  path: /opt/rocm/bin/hipblaslt-bench
+  iters: 20
+  cold_iters: 3
+  timeout: 300  # seconds per shape
+
+gpus: [0, 1, 2, 3]
+arch: gfx942
+n_cu: 304
+
+# Problem sampling
+sampling:
+  dtype: bf16_r
+  transA: T
+  transB: N
+  # Log-uniform sampling: M ~ round_to_16(2^U(lo, hi))
+  log2_m: [0, 15]  # range [1, 32768]
+  log2_n: [0, 15]
+  log2_k: [0, 15]
+
+# Model
+model:
+  input_dim: 92
+  hidden_dim: 256
+  n_blocks: 2
+  dropout: 0.1
+
+# Training
+training:
+  lr: 0.001
+  weight_decay: 0.00001
+  ranking_weight: 0.1
+  batch_size: 512
+  train_steps_per_shape: 20
+  buffer_size: 100000
+
+# Evaluation
+eval_interval: 50  # evaluate every N new shapes
+
+# Data persistence
+data_dir: ./data
+checkpoint_dir: ./checkpoints
