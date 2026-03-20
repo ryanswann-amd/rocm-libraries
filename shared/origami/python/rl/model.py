@@ -42,6 +42,7 @@ class CorrectionMLP(nn.Module):
         dropout: float = 0.1,
     ):
         super().__init__()
+        self.input_norm = nn.BatchNorm1d(input_dim)
         self.input_proj = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.GELU(),
@@ -54,7 +55,8 @@ class CorrectionMLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass. Returns (batch,) shaped predictions."""
-        h = self.input_proj(x)
+        h = self.input_norm(x)
+        h = self.input_proj(h)
         h = self.blocks(h)
         return self.head(h).squeeze(-1)
 

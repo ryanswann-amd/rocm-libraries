@@ -1,7 +1,7 @@
 # Origami RL Trainer Configuration
 bench:
   # Path to hipblaslt-bench binary — override with --bench flag
-  path: /opt/rocm/bin/hipblaslt-bench
+  path: /data0/ryaswann/repos/rocm-libraries/build-bench/clients/hipblaslt-bench
   iters: 20
   cold_iters: 3
   timeout: 300  # seconds per shape
