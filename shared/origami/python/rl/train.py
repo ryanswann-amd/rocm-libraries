@@ -43,6 +43,7 @@ from evaluate import evaluate_model, format_metrics
 from features import (
     NUM_FEATURES,
     extract_features_for_shape,
+    get_clock_mhz,
     make_hardware,
 )
 from model import CorrectionMLP, compute_loss
@@ -86,7 +87,11 @@ def benchmark_shape(bench_path: str, M: int, N: int, K: int,
 
 def process_shape(hw, shape_id: int, M: int, N: int, K: int,
                   solutions: list[dict], cfg: dict) -> list[dict]:
-    """Extract features and build buffer entries for a shape."""
+    """Extract features and build buffer entries for a shape.
+
+    Target is within-shape gflops percentile (0=worst, 1=best).
+    This normalizes away between-shape variation entirely.
+    """
     s = cfg['sampling']
     feat_results = extract_features_for_shape(
         hw, M, N, K, solutions,
@@ -94,16 +99,25 @@ def process_shape(hw, shape_id: int, M: int, N: int, K: int,
         transA=s['transA'],
         transB=s['transB'],
         n_cu=cfg['n_cu'],
+        clock_mhz=get_clock_mhz(cfg['arch']),
     )
 
+    if not feat_results:
+        return []
+
+    # Compute within-shape percentile targets (higher = faster)
+    gflops_arr = np.array([r['gflops'] for r in feat_results])
+    ranks = np.argsort(np.argsort(gflops_arr))  # rank indices
+    percentiles = ranks / max(len(ranks) - 1, 1)  # 0=worst, 1=best
+
     entries = []
-    for r in feat_results:
+    for r, pct in zip(feat_results, percentiles):
         entries.append({
             'shape_id': shape_id,
             'M': M, 'N': N, 'K': K,
             'kernel_sig': r['kernel_sig'],
             'features': r['features'],
-            'log_correction': r['log_correction'],
+            'log_correction': float(pct),  # target: within-shape percentile
             'gflops': r['gflops'],
             'us': r['us'],
         })

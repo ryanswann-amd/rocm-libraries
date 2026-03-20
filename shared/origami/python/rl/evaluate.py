@@ -6,6 +6,7 @@ Computes:
 - Selection regret: 1 - picked_gflops / oracle_gflops
 - Top-1 accuracy: fraction of shapes where predicted best = actual best
 - Top-5 accuracy
+- Origami baseline comparison
 """
 
 import logging
@@ -15,6 +16,10 @@ import numpy as np
 import torch
 
 log = logging.getLogger(__name__)
+
+# Minimum oracle GFLOPS to include shape in ranking eval.
+# Tiny shapes (e.g. 16x16x16) have noisy timings that inflate regret.
+MIN_ORACLE_GFLOPS = 100.0
 
 
 def evaluate_model(
@@ -30,11 +35,13 @@ def evaluate_model(
             features, log_correction, shape_ids, gflops, M, N, K
 
     Returns:
-        dict with: mae, regret_mean, top1_acc, top5_acc, n_shapes, n_entries
+        dict with: mae, regret_mean, top1_acc, top5_acc, n_shapes, n_entries,
+                   origami_regret_pct (baseline comparison)
     """
     if buffer_data is None or len(buffer_data['features']) == 0:
         return {'mae': float('inf'), 'regret_mean': 1.0, 'top1_acc': 0.0,
-                'top5_acc': 0.0, 'n_shapes': 0, 'n_entries': 0}
+                'top5_acc': 0.0, 'n_shapes': 0, 'n_entries': 0,
+                'origami_regret_pct': 100.0}
 
     model.eval()
     with torch.no_grad():
@@ -48,30 +55,43 @@ def evaluate_model(
     # Per-shape metrics
     shape_ids = buffer_data['shape_ids']
     gflops = buffer_data['gflops']
+    features = buffer_data['features']
     unique_shapes = np.unique(shape_ids)
 
     top1_hits = 0
     top5_hits = 0
     regrets = []
+    origami_regrets = []
 
     for sid in unique_shapes:
         mask = shape_ids == sid
         s_preds = preds[mask]
         s_gflops = gflops[mask]
+        s_features = features[mask]
 
         if len(s_preds) < 2:
             continue
 
-        # The model predicts log(actual/origami). Lower predicted correction
-        # means the kernel is faster than origami expected. But we need to rank
-        # by predicted actual latency = origami_us * exp(pred_correction).
-        # Since we want highest gflops, and gflops ~ 1/latency, we want
-        # lowest predicted correction (most negative = fastest actual).
-        pred_ranking = np.argsort(s_preds)  # ascending correction = fastest first
         actual_ranking = np.argsort(-s_gflops)  # descending gflops = fastest first
-
         best_actual_idx = actual_ranking[0]
+        oracle_gflops = s_gflops[best_actual_idx]
+
+        # Skip tiny shapes where timings are noisy
+        if oracle_gflops < MIN_ORACLE_GFLOPS:
+            continue
+
+        # Model predicts within-shape percentile (higher = faster)
+        pred_ranking = np.argsort(-s_preds)  # descending score = fastest first
         best_pred_idx = pred_ranking[0]
+
+        # Origami baseline: pick kernel with lowest origami latency
+        # log_origami_us is feature index 5
+        s_log_origami_us = s_features[:, 5]
+        origami_ranking = np.argsort(s_log_origami_us)
+        origami_pick_idx = origami_ranking[0]
+        origami_gf = s_gflops[origami_pick_idx]
+        origami_regret = 1.0 - (origami_gf / oracle_gflops) if oracle_gflops > 0 else 0.0
+        origami_regrets.append(origami_regret)
 
         # Top-1: did we pick the actual fastest kernel?
         if best_pred_idx == best_actual_idx:
@@ -83,7 +103,6 @@ def evaluate_model(
             top5_hits += 1
 
         # Regret: how much gflops do we lose vs oracle?
-        oracle_gflops = s_gflops[best_actual_idx]
         picked_gflops = s_gflops[best_pred_idx]
         regret = 1.0 - (picked_gflops / oracle_gflops) if oracle_gflops > 0 else 0.0
         regrets.append(regret)
@@ -95,6 +114,7 @@ def evaluate_model(
         'regret_pct': float(np.mean(regrets) * 100) if regrets else 100.0,
         'top1_acc': float(top1_hits / n_shapes) if n_shapes > 0 else 0.0,
         'top5_acc': float(top5_hits / n_shapes) if n_shapes > 0 else 0.0,
+        'origami_regret_pct': float(np.mean(origami_regrets) * 100) if origami_regrets else 100.0,
         'n_shapes': n_shapes,
         'n_entries': len(preds),
     }
@@ -106,7 +126,7 @@ def format_metrics(metrics: dict) -> str:
     """Format metrics dict as a human-readable string."""
     return (
         f"MAE={metrics['mae']:.4f}  "
-        f"Regret={metrics['regret_pct']:.2f}%  "
+        f"Regret={metrics['regret_pct']:.2f}% (origami={metrics.get('origami_regret_pct', 0):.2f}%)  "
         f"Top-1={metrics['top1_acc']:.1%}  "
         f"Top-5={metrics['top5_acc']:.1%}  "
         f"({metrics['n_entries']} entries, {metrics['n_shapes']} shapes)"

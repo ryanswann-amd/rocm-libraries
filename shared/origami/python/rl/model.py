@@ -62,50 +62,41 @@ class CorrectionMLP(nn.Module):
 
 
 def ranking_loss(
-    pred_corrections: torch.Tensor,
-    actual_corrections: torch.Tensor,
+    pred_log_us: torch.Tensor,
+    actual_log_us: torch.Tensor,
     shape_ids: torch.Tensor,
 ) -> torch.Tensor:
-    """Pairwise ranking loss within each shape.
+    """Pairwise ranking loss on predicted log(actual_us) within each shape.
 
-    For pairs (i, j) within the same shape, penalize inversions:
-    if actual_i < actual_j (i is faster) but pred_i > pred_j (model says i is slower).
-
-    We use log-corrections, so lower correction = relatively faster than origami predicted.
-    We want the model to rank kernels by actual speed within a shape.
+    For pairs (i, j) within the same shape, penalize ordering inversions:
+    if actual_us_i < actual_us_j (i is faster) but pred_us_i > pred_us_j.
     """
     unique_shapes = shape_ids.unique()
-    total_loss = torch.tensor(0.0, device=pred_corrections.device)
+    total_loss = torch.tensor(0.0, device=pred_log_us.device)
     n_pairs = 0
 
     for sid in unique_shapes:
         mask = shape_ids == sid
         if mask.sum() < 2:
             continue
-        pred = pred_corrections[mask]
-        actual = actual_corrections[mask]
 
-        # All pairs within this shape
+        pred = pred_log_us[mask]
+        actual = actual_log_us[mask]
+
         n = pred.size(0)
-        # Sample pairs to avoid O(n^2) for large shapes
-        max_pairs = min(n * (n - 1) // 2, 256)
-        if n > 23:  # 23*22/2 = 253, close to 256
+        if n > 23:
             idx = torch.randperm(n, device=pred.device)[:23]
             pred = pred[idx]
             actual = actual[idx]
             n = pred.size(0)
 
-        # Pairwise differences
-        pred_diff = pred.unsqueeze(0) - pred.unsqueeze(1)   # (n, n)
-        actual_diff = actual.unsqueeze(0) - actual.unsqueeze(1)  # (n, n)
+        pred_diff = pred.unsqueeze(0) - pred.unsqueeze(1)
+        actual_diff = actual.unsqueeze(0) - actual.unsqueeze(1)
 
-        # Upper triangle only (avoid double counting)
         triu_mask = torch.triu(torch.ones(n, n, device=pred.device, dtype=torch.bool), diagonal=1)
         pred_d = pred_diff[triu_mask]
         actual_d = actual_diff[triu_mask]
 
-        # Margin ranking loss: if actual_d > 0 (i slower than j), pred_d should be > 0
-        # loss = max(0, -sign(actual_d) * pred_d + margin)
         margin = 0.1
         signs = actual_d.sign()
         pair_loss = torch.clamp(margin - signs * pred_d, min=0)
@@ -114,7 +105,7 @@ def ranking_loss(
         n_pairs += pair_loss.numel()
 
     if n_pairs == 0:
-        return torch.tensor(0.0, device=pred_corrections.device)
+        return torch.tensor(0.0, device=pred_log_us.device)
     return total_loss / n_pairs
 
 
@@ -124,9 +115,10 @@ def compute_loss(
     shape_ids: torch.Tensor,
     ranking_weight: float = 0.1,
 ) -> tuple[torch.Tensor, dict]:
-    """Combined loss: MAE + ranking_weight * ranking_loss.
+    """Combined loss: MAE on log(us) + ranking_weight * ranking_loss.
 
-    Returns (loss, metrics_dict).
+    Both pred and target are log(actual_us). The ranking loss ensures
+    the model preserves within-shape ordering.
     """
     mae = (pred - target).abs().mean()
     rloss = ranking_loss(pred, target, shape_ids)

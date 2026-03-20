@@ -61,6 +61,12 @@ def _safe_div(a: float, b: float, default: float = 0.0) -> float:
     return a / b if b != 0 else default
 
 
+def get_clock_mhz(arch: str = 'gfx942') -> float:
+    """Get clock speed in MHz for the given architecture."""
+    clocks = {'gfx942': 1700.0, 'gfx950': 2100.0}
+    return clocks.get(arch, 1700.0)
+
+
 def make_hardware(arch: str = 'gfx942'):
     """Create origami hardware descriptor for the given architecture."""
     import origami
@@ -122,6 +128,7 @@ def extract_features_for_shape(
     dtype: str = 'bf16_r',
     transA: str = 'T', transB: str = 'N',
     n_cu: int = 304,
+    clock_mhz: float = 1700.0,
 ) -> list[dict]:
     """Extract features and origami predictions for all solutions in a shape.
 
@@ -253,9 +260,10 @@ def extract_features_for_shape(
             pass
 
         try:
-            latency = origami.compute_total_latency(p, hw, c, n_cu)
-            if latency != float('inf') and latency > 0:
-                origami_us = latency
+            latency_cycles = origami.compute_total_latency(p, hw, c, n_cu)
+            if latency_cycles != float('inf') and latency_cycles > 0:
+                # Convert from clock cycles to microseconds
+                origami_us = latency_cycles / clock_mhz
         except Exception:
             pass
 
@@ -355,7 +363,7 @@ def extract_features_for_shape(
 
         results.append({
             'features': fvec,
-            'log_correction': log_correction,
+            'log_correction': 0.0,  # placeholder, will be set to within-shape percentile
             'gflops': sol['gflops'],
             'us': actual_us,
             'origami_us': origami_us,

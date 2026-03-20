@@ -16,9 +16,9 @@ sampling:
   transA: T
   transB: N
   # Log-uniform sampling: M ~ round_to_16(2^U(lo, hi))
-  log2_m: [0, 15]  # range [1, 32768]
-  log2_n: [0, 15]
-  log2_k: [0, 15]
+  log2_m: [6, 14]  # range [64, 16384]
+  log2_n: [6, 14]
+  log2_k: [6, 14]
 
 # Model
 model:
@@ -31,10 +31,10 @@ model:
 training:
   lr: 0.001
   weight_decay: 0.00001
-  ranking_weight: 0.1
+  ranking_weight: 0.0
   batch_size: 512
-  train_steps_per_shape: 20
-  buffer_size: 100000
+  train_steps_per_shape: 50
+  buffer_size: 500000
 
 # Evaluation
 eval_interval: 50  # evaluate every N new shapes
