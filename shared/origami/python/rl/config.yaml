@@ -2,9 +2,9 @@
 bench:
   # Path to hipblaslt-bench binary — override with --bench flag
   path: /data0/ryaswann/repos/rocm-libraries/build-bench/clients/hipblaslt-bench
-  iters: 20
-  cold_iters: 3
-  timeout: 300  # seconds per shape
+  iters: 3
+  cold_iters: 1
+  timeout: 120  # seconds per shape
 
 gpus: [0, 1, 2, 3]
 arch: gfx942
