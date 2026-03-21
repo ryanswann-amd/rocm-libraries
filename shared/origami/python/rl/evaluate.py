@@ -7,12 +7,14 @@ Computes:
 - Top-1 accuracy: fraction of shapes where predicted best = actual best
 - Top-5 accuracy
 - Origami baseline comparison
+- Spearman rank correlation with actual performance
 """
 
 import logging
 from typing import Optional
 
 import numpy as np
+from scipy.stats import spearmanr
 import torch
 
 log = logging.getLogger(__name__)
@@ -62,6 +64,8 @@ def evaluate_model(
     top5_hits = 0
     regrets = []
     origami_regrets = []
+    model_corrs = []
+    origami_corrs = []
 
     for sid in unique_shapes:
         mask = shape_ids == sid
@@ -93,6 +97,15 @@ def evaluate_model(
         origami_regret = 1.0 - (origami_gf / oracle_gflops) if oracle_gflops > 0 else 0.0
         origami_regrets.append(origami_regret)
 
+        # Spearman rank correlation with actual GFLOPS
+        if len(s_gflops) >= 5:
+            model_r, _ = spearmanr(s_preds, s_gflops)  # higher pred = higher gflops
+            origami_r, _ = spearmanr(-s_log_origami_us, s_gflops)  # lower latency = higher gflops
+            if not np.isnan(model_r):
+                model_corrs.append(model_r)
+            if not np.isnan(origami_r):
+                origami_corrs.append(origami_r)
+
         # Top-1: did we pick the actual fastest kernel?
         if best_pred_idx == best_actual_idx:
             top1_hits += 1
@@ -115,6 +128,8 @@ def evaluate_model(
         'top1_acc': float(top1_hits / n_shapes) if n_shapes > 0 else 0.0,
         'top5_acc': float(top5_hits / n_shapes) if n_shapes > 0 else 0.0,
         'origami_regret_pct': float(np.mean(origami_regrets) * 100) if origami_regrets else 100.0,
+        'model_spearman': float(np.mean(model_corrs)) if model_corrs else 0.0,
+        'origami_spearman': float(np.mean(origami_corrs)) if origami_corrs else 0.0,
         'n_shapes': n_shapes,
         'n_entries': len(preds),
     }
@@ -129,5 +144,6 @@ def format_metrics(metrics: dict) -> str:
         f"Regret={metrics['regret_pct']:.2f}% (origami={metrics.get('origami_regret_pct', 0):.2f}%)  "
         f"Top-1={metrics['top1_acc']:.1%}  "
         f"Top-5={metrics['top5_acc']:.1%}  "
+        f"Spearman={metrics.get('model_spearman', 0):.3f} (origami={metrics.get('origami_spearman', 0):.3f})  "
         f"({metrics['n_entries']} entries, {metrics['n_shapes']} shapes)"
     )
