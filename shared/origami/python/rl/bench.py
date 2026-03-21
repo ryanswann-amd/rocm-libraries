@@ -76,8 +76,13 @@ def run_hipblaslt_bench(
     iters: int = 20, cold_iters: int = 3,
     gpu_id: int = 0,
     timeout: int = 300,
+    best_per_tile: bool = True,
 ) -> list[dict]:
     """Run hipblaslt-bench --algo_method all and parse all kernel solutions.
+
+    If best_per_tile=True, keeps only the best (highest gflops) kernel per
+    unique macro tile. This reduces ~1280 solutions to ~190, making each
+    shape ~7x faster to benchmark while preserving tile-level diversity.
 
     Returns a list of dicts, one per kernel solution:
         {kernel_signature, macro_tile, gflops, us, algo_index, params}
@@ -117,11 +122,31 @@ def run_hipblaslt_bench(
     output = result.stdout + '\n' + result.stderr
 
     solutions = _parse_bench_output(output, M, N, K, dtype)
+
+    if best_per_tile and solutions:
+        solutions = _filter_best_per_tile(solutions)
+
     log.info(
         "Bench %dx%dx%d: %d solutions in %.1fs",
         M, N, K, len(solutions), elapsed,
     )
     return solutions
+
+
+def _filter_best_per_tile(solutions: list[dict]) -> list[dict]:
+    """Keep only the highest-gflops kernel per unique macro tile.
+
+    Reduces ~1280 solutions to ~190 by deduplicating within each tile config.
+    Different GSU, vector widths, etc. for the same tile are collapsed to the best.
+    """
+    best = {}  # macro_tile -> best solution
+    for sol in solutions:
+        tile = sol.get('macro_tile', '')
+        if not tile:
+            continue
+        if tile not in best or sol['gflops'] > best[tile]['gflops']:
+            best[tile] = sol
+    return list(best.values())
 
 
 def _parse_bench_output(output: str, M: int, N: int, K: int, dtype: str) -> list[dict]:
