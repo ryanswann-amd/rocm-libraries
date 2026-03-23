@@ -315,6 +315,7 @@ def run_training(cfg: dict, bench_path: str, gpus: list[int]):
 
     # Initialize
     buffer = ReplayBuffer(max_size=cfg['training']['buffer_size'])
+    test_buffer = ReplayBuffer(max_size=cfg['training']['buffer_size'])
     model = CorrectionMLP(
         input_dim=cfg['model']['input_dim'],
         hidden_dim=cfg['model']['hidden_dim'],
@@ -389,12 +390,21 @@ def run_training(cfg: dict, bench_path: str, gpus: list[int]):
                 # Extract features
                 entries = process_shape(hw, shape_id, M, N, K, solutions, cfg)
                 if entries:
-                    buffer.add_shape(entries)
+                    # 80/20 train/test split by shape
+                    is_test = (hash(f"{M}_{N}_{K}") % 5 == 0)
+                    if is_test:
+                        test_buffer.add_shape(entries)
+                        log.info(
+                            "Shape %d: %dx%dx%d -> %d solutions [TEST] (test: %d)",
+                            shape_id, M, N, K, len(entries), len(test_buffer),
+                        )
+                    else:
+                        buffer.add_shape(entries)
+                        log.info(
+                            "Shape %d: %dx%dx%d -> %d solutions [TRAIN] (train: %d)",
+                            shape_id, M, N, K, len(entries), len(buffer),
+                        )
                     shapes_since_eval += 1
-                    log.info(
-                        "Shape %d: %dx%dx%d -> %d/%d solutions with features (buffer: %d)",
-                        shape_id, M, N, K, len(entries), len(solutions), len(buffer),
-                    )
 
         # Train on buffer
         if len(buffer) > 0:
@@ -413,10 +423,19 @@ def run_training(cfg: dict, bench_path: str, gpus: list[int]):
         # Evaluate periodically
         if shapes_since_eval >= cfg['eval_interval']:
             shapes_since_eval = 0
-            buf_data = buffer.get_all()
-            eval_metrics = evaluate_model(model, buf_data, device)
-            log.info("EVAL [step %d, %d shapes]: %s",
-                     total_train_steps, buffer.n_shapes, format_metrics(eval_metrics))
+            # Evaluate on held-out test set
+            test_data = test_buffer.get_all()
+            if test_data is not None and len(test_data['features']) > 0:
+                eval_metrics = evaluate_model(model, test_data, device)
+                log.info("EVAL [step %d, %d train + %d test shapes]: %s",
+                         total_train_steps, buffer.n_shapes, test_buffer.n_shapes,
+                         format_metrics(eval_metrics))
+            else:
+                # Fallback to train set if no test data yet
+                buf_data = buffer.get_all()
+                eval_metrics = evaluate_model(model, buf_data, device)
+                log.info("EVAL [step %d, %d shapes (train-only)]: %s",
+                         total_train_steps, buffer.n_shapes, format_metrics(eval_metrics))
 
             action = 'eval'
             if eval_metrics['regret_mean'] < best_regret:

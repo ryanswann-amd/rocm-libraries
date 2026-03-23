@@ -34,7 +34,7 @@ training:
   ranking_weight: 0.0
   batch_size: 512
   train_steps_per_shape: 50
-  buffer_size: 500000
+  buffer_size: 5000000
 
 # Evaluation
 eval_interval: 50  # evaluate every N new shapes
