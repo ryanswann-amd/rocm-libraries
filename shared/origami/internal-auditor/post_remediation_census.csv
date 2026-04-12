@@ -1,0 +1,18 @@
+file,line,classification,content_snippet,action
+verified_manifest.csv,37,meta_reference,"""- 17 `[VERIFIED]` tags, 0 `[ESTIMATED]` tags"",see_text,report-rigor.md,29,grep -n '[VERIFIED]' report-rigor.md | sed -n",no_action
+verify-optimization.md,15,meta_reference,"3. **K=5 projection is unverified.** The recommendation section states K=5 ""reduces mean to 1.81%"" without a [VERIFIED] ",no_action
+verify-optimization.md,19,meta_reference,5. **[ESTIMATED] gate: CLEARED.** Zero [ESTIMATED] tags found. All 5 substantive claims carry [VERIFIED]. The original h,no_action
+verify-optimization.md,30,meta_reference,- Zero `[ESTIMATED]` tags found (down from 43). All headline metrics carry `[VERIFIED]` tags (5 instances across Key Res,no_action
+verify-optimization.md,105,meta_reference,- ✅ No `[ESTIMATED]` tags found anywhere in optimization artifacts (hard gate: **PASS**),no_action
+verify-optimization.md,110,meta_reference,The original failure was **43 `[ESTIMATED]` tags** across reports. This cycle contains **zero** `[ESTIMATED]` tags. All ,no_action
+rigor/merge_diff_audit.txt,82,meta_reference,- [ESTIMATED] tags across all 3 files: 0 (pre and post),no_action
+rigor/verify_claims.py,12,meta_reference,No [ESTIMATED] tags are ever produced.,no_action
+alignment/artifact_inventory.json,23,meta_reference,"""note"": ""Mentions [ESTIMATED] only in the context of confirming zero remain — NOT an actual estimated claim""",no_action
+alignment/artifact_inventory.json,28,meta_reference,"""note"": ""Mentions [ESTIMATED] only in the context of confirming zero remain — NOT an actual estimated claim""",no_action
+alignment/artifact_inventory.json,144,meta_reference,"""hard_gate_status"": ""PASS — 0 [ESTIMATED] tags remain (lds_fix_prototype.md:255 remediated to [OUT-OF-SCOPE])"",",no_action
+alignment/s3_decode_latency_stress_test.py,424,meta_reference,"analysis_lines.append(f""  No [ESTIMATED] values — all numbers are [VERIFIED] from measured data"")",no_action
+alignment/s3_decode_latency_stress_test.py,502,meta_reference,"print(f""Zero [ESTIMATED] tags"")",no_action
+alignment/cumulative_decode_impact_analysis.txt,142,meta_reference,No [ESTIMATED] values — all numbers are [VERIFIED] from measured data,no_action
+verify-internal-auditor.md,13,meta_reference,2. **[VERIFIED] tagging is correct.** Zero [ESTIMATED] or [UNVERIFIED] tags in the auditor's own claims. All 5 key resul,no_action
+verify-internal-auditor.md,33,meta_reference,2. **No [ESTIMATED] tags**: Zero instances in this report. The report *discusses* estimation tags in other teams' artifa,no_action
+verify-internal-auditor.md,45,meta_reference,"I'll systematically validate the internal-auditor's K-016 work by locating and running actual code, checking artifacts, ",no_action
