@@ -1,81 +1,73 @@
 {
+  "cycle": 3,
   "recomputed_metrics": {
     "n_shapes": 16,
     "spearman_rho_mean": 0.8438,
-    "spearman_rho_claimed": 0.8438,
-    "spearman_rho_delta": 0.0,
-    "top1_pct": 6.2,
+    "spearman_rho_recomputed": 0.8437555157,
+    "spearman_rho_delta": 4e-05,
+    "spearman_rho_status": "MATCH (<0.1pp threshold)",
+    "top1_pct": 6.25,
     "top1_claimed": 6.2,
-    "avg_regret_pct": 17.51,
+    "top1_status": "MATCH",
+    "avg_regret_with_lds_filter": 17.512,
+    "avg_regret_no_lds_filter": 17.8777,
     "avg_regret_claimed": 17.9,
-    "avg_regret_delta_pp": 0.39,
-    "category_regrets": {
-      "prefill": {
-        "mean": 18.0,
-        "max": 35.7,
-        "n": 9
-      },
-      "small_prefill": {
-        "mean": 10.2,
-        "max": 19.4,
-        "n": 3
-      },
-      "decode": {
-        "mean": 21.9,
-        "max": 32.2,
-        "n": 4
-      }
-    }
+    "delta_with_filter_pp": 0.388,
+    "delta_no_filter_pp": 0.0223,
+    "regret_note": "Claimed 17.9% matches no-LDS-filter value (17.88%) within 0.02pp. The with-filter value (17.51%) is 0.39pp lower \u2014 this is the delta previously flagged."
   },
-  "lds_representativeness": {
-    "total_shapes_tested": 131,
-    "pct_decode": 100.0,
+  "k3_cv_corpus": {
+    "n_shapes": 1863,
+    "claimed_mean": 3.06,
+    "recomputed_mean": 3.0615,
+    "delta_pp": 0.0015,
+    "status": "MATCH",
+    "claimed_uncertainty": 0.13,
+    "recomputed_sem": 0.1407,
+    "recomputed_std": 6.0738,
+    "zero_regret_shapes": 1093,
+    "zero_regret_pct": 58.7,
+    "shapes_gt_25pct_regret": 39,
+    "shapes_gt_25pct_pct": 2.09
+  },
+  "lds_crash_risk": {
+    "claim": "0/42",
+    "verified": "0/262 across 6 datasets",
+    "status": "VERIFIED \u2014 but all 262 shapes are M=1 (decode only)",
     "prefill_shapes_tested": 0,
-    "gap": "0/42 claim covers only decode (M<=1) shapes; no prefill coverage"
+    "representativeness_gap": "100% decode, 0% prefill/compute \u2014 systematic coverage hole"
   },
   "process_integrity": {
-    "teams_flagging_regret_concern": 0,
+    "teams_flagging_regret_concern": [
+      "alignment",
+      "rigor",
+      "research"
+    ],
+    "teams_flagging_regret_count": 3,
+    "teams_not_flagging_regret": [
+      "benchmarking",
+      "optimization"
+    ],
     "teams_flagging_scope_deferral": 0,
-    "risk_coverage_pct": 20.0,
-    "cross_report_copy_paste": 0,
-    "shared_6gram_nontrivial": 105,
-    "independence_verdict": "Reports are independently written (0 duplicate sentences), but risk-flagging is weak (20% coverage)"
+    "teams_flagging_16v1863_gap": [
+      "alignment",
+      "optimization"
+    ],
+    "risk_coverage_pct": 30.0,
+    "total_flags": 6,
+    "total_possible": 20,
+    "cross_report_copy_paste_sentences": 0,
+    "independence_verdict": "Reports are independently written. Risk-flagging improved from 20% (cycle 2) to 30% (cycle 3) but scope deferral remains unquestioned."
   },
-  "worst_shapes_by_regret": [
-    {
-      "shape": "2048x4096x5376_bf16_r",
-      "regret_pct": 35.69,
-      "picked_tile": "256x224x64",
-      "oracle_tile": "256x128x64",
-      "gap_tflops": 362.1
-    },
-    {
-      "shape": "1x16384x16384_bf16_r",
-      "regret_pct": 32.17,
-      "picked_tile": "16x256x64",
-      "oracle_tile": "16x32x512",
-      "gap_tflops": 2.1
-    },
-    {
-      "shape": "1536x3584x3584_f16_r",
-      "regret_pct": 31.39,
-      "picked_tile": "256x224x64",
-      "oracle_tile": "128x192x64",
-      "gap_tflops": 233.2
-    },
-    {
-      "shape": "1x13312x16384_bf16_r",
-      "regret_pct": 30.85,
-      "picked_tile": "16x256x64",
-      "oracle_tile": "64x64x256",
-      "gap_tflops": 2.0
-    },
-    {
-      "shape": "3600x4096x4096_bf16_r",
-      "regret_pct": 28.72,
-      "picked_tile": "192x256x64",
-      "oracle_tile": "256x256x64",
-      "gap_tflops": 313.8
-    }
+  "source_files": [
+    "banff_data/correlation_results.json",
+    "banff_data/correlation_results_no_lds_filter.json",
+    "benchmarking/k3_per_shape_regret.csv",
+    "lds_analysis_results.json",
+    "report-alignment.md",
+    "report-rigor.md",
+    "report-research.md",
+    "report-optimization.md",
+    "report-benchmarking.md"
   ]
 }
