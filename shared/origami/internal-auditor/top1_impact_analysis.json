@@ -1,0 +1,154 @@
+{
+  "total_oracle_gflops": 9334307.469999999,
+  "total_picked_gflops": 7770760.529999999,
+  "tflops_lost": 1563.5469399999995,
+  "flop_weighted_regret_pct": 16.750540359048184,
+  "top1_misses": 15,
+  "top1_accuracy_pct": 6.25,
+  "per_shape": [
+    {
+      "shape": "12288x9472x32768_bf16_r",
+      "oracle_tile": "256x256x64",
+      "picked_tile": "256x256x64",
+      "oracle_gflops": 1165570.0,
+      "picked_gflops": 1165570.0,
+      "regret_pct": 0.0,
+      "top1_hit": true
+    },
+    {
+      "shape": "128x13312x16384_bf16_r",
+      "oracle_tile": "128x128x256",
+      "picked_tile": "128x224x64",
+      "oracle_gflops": 532976.0,
+      "picked_gflops": 517226.0,
+      "regret_pct": 2.955104920296603,
+      "top1_hit": false
+    },
+    {
+      "shape": "128x16384x16384_bf16_r",
+      "oracle_tile": "128x128x256",
+      "picked_tile": "128x224x64",
+      "oracle_gflops": 585694.0,
+      "picked_gflops": 536745.0,
+      "regret_pct": 8.357435794117752,
+      "top1_hit": false
+    },
+    {
+      "shape": "128x16384x6656_bf16_r",
+      "oracle_tile": "128x128x128",
+      "picked_tile": "128x224x64",
+      "oracle_gflops": 525947.0,
+      "picked_gflops": 423888.0,
+      "regret_pct": 19.404806948228625,
+      "top1_hit": false
+    },
+    {
+      "shape": "1536x3584x3584_f16_r",
+      "oracle_tile": "128x192x64",
+      "picked_tile": "256x224x64",
+      "oracle_gflops": 743126.0,
+      "picked_gflops": 509885.0,
+      "regret_pct": 31.386467436208665,
+      "top1_hit": false
+    },
+    {
+      "shape": "1x1280x8192_bf16_r",
+      "oracle_tile": "64x64x64",
+      "picked_tile": "16x64x128",
+      "oracle_gflops": 1949.03,
+      "picked_gflops": 1726.05,
+      "regret_pct": 11.440562741466264,
+      "top1_hit": false
+    },
+    {
+      "shape": "1x1280x8192_f16_r",
+      "oracle_tile": "16x16x512",
+      "picked_tile": "16x64x128",
+      "oracle_gflops": 1997.29,
+      "picked_gflops": 1733.18,
+      "regret_pct": 13.223417731025533,
+      "top1_hit": false
+    },
+    {
+      "shape": "1x13312x16384_bf16_r",
+      "oracle_tile": "64x64x256",
+      "picked_tile": "16x256x64",
+      "oracle_gflops": 6342.07,
+      "picked_gflops": 4385.76,
+      "regret_pct": 30.84655325469444,
+      "top1_hit": false
+    },
+    {
+      "shape": "1x16384x16384_bf16_r",
+      "oracle_tile": "16x32x512",
+      "picked_tile": "16x256x64",
+      "oracle_gflops": 6576.08,
+      "picked_gflops": 4460.54,
+      "regret_pct": 32.170229072639025,
+      "top1_hit": false
+    },
+    {
+      "shape": "2048x1336x6176_bf16_r",
+      "oracle_tile": "224x224x64",
+      "picked_tile": "256x192x64",
+      "oracle_gflops": 607853.0,
+      "picked_gflops": 526100.0,
+      "regret_pct": 13.449468868295455,
+      "top1_hit": false
+    },
+    {
+      "shape": "2048x4096x5376_bf16_r",
+      "oracle_tile": "256x128x64",
+      "picked_tile": "256x224x64",
+      "oracle_gflops": 1014450.0,
+      "picked_gflops": 652400.0,
+      "regret_pct": 35.689289762925725,
+      "top1_hit": false
+    },
+    {
+      "shape": "2048x4096x5376_f16_r",
+      "oracle_tile": "128x256x64",
+      "picked_tile": "256x224x64",
+      "oracle_gflops": 918850.0,
+      "picked_gflops": 798039.0,
+      "regret_pct": 13.148065516678454,
+      "top1_hit": false
+    },
+    {
+      "shape": "32768x128x8192_bf16_r",
+      "oracle_tile": "160x128x128",
+      "picked_tile": "224x128x64",
+      "oracle_gflops": 574770.0,
+      "picked_gflops": 499161.0,
+      "regret_pct": 13.154653165614071,
+      "top1_hit": false
+    },
+    {
+      "shape": "3600x4096x4096_bf16_r",
+      "oracle_tile": "256x256x64",
+      "picked_tile": "192x256x64",
+      "oracle_gflops": 1092680.0,
+      "picked_gflops": 778876.0,
+      "regret_pct": 28.71874656807116,
+      "top1_hit": false
+    },
+    {
+      "shape": "4196x4196x4196_bf16_r",
+      "oracle_tile": "192x192x64",
+      "picked_tile": "288x224x64",
+      "oracle_gflops": 811741.0,
+      "picked_gflops": 695341.0,
+      "regret_pct": 14.339549191182899,
+      "top1_hit": false
+    },
+    {
+      "shape": "4196x4196x4196_f16_r",
+      "oracle_tile": "192x192x64",
+      "picked_tile": "288x224x64",
+      "oracle_gflops": 743786.0,
+      "picked_gflops": 655224.0,
+      "regret_pct": 11.90691946339404,
+      "top1_hit": false
+    }
+  ]
+}
