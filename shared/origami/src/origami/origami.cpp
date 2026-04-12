@@ -543,6 +543,12 @@ std::vector<prediction_result_t> rank_configs(const problem_t& problem,
   for (auto& config : configs) {
     if (!check_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype))
       continue;
+
+    // Decode-shape guard: when M <= 1, oversized N-blocks waste memory
+    // bandwidth without useful work. Clamp BLOCK_N to 64 for these shapes.
+    if (problem.size.m <= 1 && config.mt.n > 64)
+      continue;
+
     double latency = compute_total_latency(problem, hardware, config, hardware.N_CU);
     if (latency != std::numeric_limits<double>::max())
       latencies_configs.push_back({latency, std::cref(config)});
