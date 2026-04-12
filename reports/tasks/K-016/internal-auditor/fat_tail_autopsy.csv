@@ -1,0 +1,6 @@
+shape,M,N,K,category,pick_tile,oracle_tile,pick_BLOCK_M,pick_BLOCK_N,pick_BLOCK_K,oracle_BLOCK_M,oracle_BLOCK_N,oracle_BLOCK_K,pick_gflops,oracle_gflops,regret_pct,tflops_gap,lds_picked_bytes,lds_oracle_bytes,picked_lds_valid,oracle_lds_valid,likely_cause
+2048x4096x5376_bf16_r,2048,4096,5376,prefill,256x224x64,256x128x64,256,224,64,256,128,64,652400.0,1014450.0,35.69,362.1,61440,49152,True,True,BLOCK_N_overvaluation_prefill
+1x16384x16384_bf16_r,1,16384,16384,decode,16x256x64,16x32x512,16,256,64,16,32,512,4460.54,6576.08,32.17,2.1,34816,49152,True,True,BLOCK_N_overvaluation_decode
+1536x3584x3584_f16_r,1536,3584,3584,prefill,256x224x64,128x192x64,256,224,64,128,192,64,509885.0,743126.0,31.39,233.2,61440,40960,True,True,tile_area_overvaluation
+1x13312x16384_bf16_r,1,13312,16384,decode,16x256x64,64x64x256,16,256,64,64,64,256,4385.76,6342.07,30.85,2.0,34816,65536,True,True,BLOCK_N_overvaluation_decode
+3600x4096x4096_bf16_r,3600,4096,4096,prefill,192x256x64,256x256x64,192,256,64,256,256,64,778876.0,1092680.0,28.72,313.8,57344,65536,True,True,cost_model_ranking_error

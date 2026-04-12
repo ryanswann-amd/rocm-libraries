@@ -1,0 +1,39 @@
+[
+  {
+    "cause": "BLOCK_N_overvaluation_prefill",
+    "count": 1,
+    "affected_shapes": [
+      "2048x4096x5376_bf16_r"
+    ],
+    "fix_description": "Reduce BLOCK_N weighting in cost model for mid-size prefill shapes where BLOCK_K dominance matters",
+    "expected_regret_reduction": "28-36pp regret reduction on affected shapes"
+  },
+  {
+    "cause": "BLOCK_N_overvaluation_decode",
+    "count": 2,
+    "affected_shapes": [
+      "1x16384x16384_bf16_r",
+      "1x13312x16384_bf16_r"
+    ],
+    "fix_description": "For M=1 decode shapes, penalize large BLOCK_N (>64) in cost model; oracle prefers small BLOCK_N with large BLOCK_K",
+    "expected_regret_reduction": "29-32pp regret reduction on affected shapes"
+  },
+  {
+    "cause": "tile_area_overvaluation",
+    "count": 1,
+    "affected_shapes": [
+      "1536x3584x3584_f16_r"
+    ],
+    "fix_description": "Cost model over-values total tile area (M*N); add penalty for shapes where M and N misalignment wastes CUs",
+    "expected_regret_reduction": "28-32pp regret reduction on affected shapes"
+  },
+  {
+    "cause": "cost_model_ranking_error",
+    "count": 1,
+    "affected_shapes": [
+      "3600x4096x4096_bf16_r"
+    ],
+    "fix_description": "General cost model calibration needed \u2014 predicted ranking diverges from hardware measurements",
+    "expected_regret_reduction": "Variable, requires per-shape analysis"
+  }
+]
