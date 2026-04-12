@@ -1,17 +1,14 @@
-claim_id,team,claim,source_file,recomputed,delta,status
-A01,rigor,Avg Spearman = 0.8438,banff_data/correlation_results.json,0.843756,4.4e-5,VERIFIED
-A02,rigor,Avg Regret = 17.88%,banff_data/correlation_results_no_lds_filter.json,17.878%,0.002pp,VERIFIED
-A03,rigor,K=3 CV regret = 3.06%,benchmarking/k3_per_shape_regret.csv,3.062%,0.002pp,VERIFIED
-A04,alignment,Prod-weighted regret = 4.54%,benchmarking/k3_per_shape_regret.csv,4.536%,0.004pp,VERIFIED
-A05,alignment,"LDS crash risk: 0% at stage-2, 10/27 fail stage-3+",rigor/expanded_lds_analysis.json,"0/9 stage-2, 10/27 total",0,VERIFIED
-A06,benchmarking,Median oracle gap = 3.30%,merged_full_corpus.csv,3.30%,0,VERIFIED
-A07,benchmarking,62.0% shapes K=3 regret within oracle noise,merged_full_corpus.csv,62.0%,0,VERIFIED
-A08,optimization,K=3 on 481-shape sweep: 1.24% regret,sweep_mi300x_wide_v5.csv,1.24%,0,VERIFIED
-A09,optimization,Decode M-threshold: 23.3% -> 3.7%,cross_validation_report.md (Table 2),3.7%,0,VERIFIED
-A10,internal-auditor,BLOCK_N decode fix: 3.94pp reduction,internal-auditor/fat_tail_autopsy.csv,3.94pp,0,VERIFIED
-A11,internal-auditor,3/21 tiles pass 3-stage LDS,internal-auditor/lds_audit.csv,3/21,0,VERIFIED
-A12,rigor,Zero-regret coverage: 58.7% (1093/1863),benchmarking/k3_per_shape_regret.csv,58.7%,0,VERIFIED
-A13,internal-auditor,Fat tail: 39/1863 shapes >25% regret,benchmarking/k3_per_shape_regret.csv,39/1863,0,VERIFIED
-P01,process,Round 1 gate fail: 4 ESTIMATED tags,system chat log,4,0,VERIFIED
-P02,process,Round 2 gate fail: 43 ESTIMATED tags,system chat log,43,0,VERIFIED
-P03,process,Total cost rounds 1-2: $69.80,system chat log,$69.80,0,VERIFIED
+claim_id,claim,reported_value,recomputed_value,source_file,delta,status
+C01,Avg Spearman (16 Banff),0.8438,0.843756,correlation_results.json,4.4e-5,MATCH
+C02,"Avg regret (16 Banff, with LDS)",17.51%,17.5120%,correlation_results.json,0.002pp,MATCH
+C03,"Avg regret (16 Banff, no LDS filter)",17.88%,17.8777%,correlation_results_no_lds_filter.json,0.002pp,MATCH
+C04,K=3 CV mean regret,3.06%,3.0615%,k3_per_shape_regret.csv,0.002pp,MATCH
+C05,K=3 CV std regret,6.07%,6.0738%,k3_per_shape_regret.csv,0.004pp,MATCH
+C06,Zero-regret shapes,58.7%,58.7%,k3_per_shape_regret.csv,0pp,MATCH
+C07,Shapes >25% regret,39 (2.1%),39 (2.09%),k3_per_shape_regret.csv,0.01pp,MATCH
+C08,3-stage valid tiles,3/21,3/21,lds_21tile_computation_trace.json,0,MATCH
+C09,Origami vs Triton formula,identical,identical,lds_21tile_computation_trace.json,0,MATCH
+C10,Decode BLOCK_N fix regret reduction,3.94pp,3.94pp,regret_reduction_verification.txt,0,MATCH
+C11,M<=1 threshold covers fat-tail,0/39,0/39,fat_tail_autopsy_full.csv,0,MATCH
+C12,Fat-tail shapes: prefill count,36/39,36/39,fat_tail_autopsy_full.csv,0,MATCH
+C13,Tiles at exact 65536 limit (2-stage),4,4,lds_21tile_computation_trace.json,0,MATCH
