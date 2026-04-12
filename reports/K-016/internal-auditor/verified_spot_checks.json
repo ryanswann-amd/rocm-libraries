@@ -1,0 +1,41 @@
+{
+  "spearman_rho": {
+    "claimed": 0.8438,
+    "verified": 0.8438,
+    "delta": 4.4e-05,
+    "match": true,
+    "source": "banff_data/correlation_results.json"
+  },
+  "top1_accuracy_pct": {
+    "claimed": 6.2,
+    "verified": 6.2,
+    "match": true,
+    "source": "banff_data/correlation_results.json"
+  },
+  "avg_regret_pct": {
+    "claimed": 17.9,
+    "verified_raw": 17.51,
+    "note": "Delta due to reranker adjustment on 4 shapes",
+    "source": "banff_data/correlation_results.json + analysis_results.md"
+  },
+  "k3_cv_test_regret": {
+    "claimed": "3.06% \u00b1 0.13%",
+    "verified": "3.06% \u00b1 0.13%",
+    "match": true,
+    "source": "cross_validation_report.md"
+  },
+  "lds_crash_risk": {
+    "claimed": "0/42",
+    "total_configs": "N/A",
+    "source": "lds_analysis_results.json + analysis_results.md"
+  },
+  "scope_notices_in_cv_report": 3,
+  "process_integrity": {
+    "exact_copy_paste_between_reports": 0,
+    "teams_flagging_16v1863_disconnect": 2,
+    "teams_flagging_top1_as_concern": 2,
+    "teams_flagging_regret_as_concern": 0,
+    "teams_questioning_scope_deferral": 0,
+    "risk_flag_coverage": "4/20 = 20%"
+  }
+}
