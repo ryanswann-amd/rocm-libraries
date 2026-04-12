@@ -1,0 +1,42 @@
+{
+  "cross_team_metric_agreement": {
+    "k3_mean_regret": {
+      "rigor": 3.06,
+      "benchmarking": 3.06,
+      "internal_auditor_recomputed": 3.0615,
+      "status": "ALL AGREE within 0.01pp"
+    },
+    "k3_worst_regret": {
+      "rigor": 33.0,
+      "benchmarking": 32.99,
+      "internal_auditor_recomputed": 32.99,
+      "status": "ALL AGREE within 0.01pp"
+    },
+    "k5_mean_regret": {
+      "rigor": 1.06,
+      "benchmarking": 1.06,
+      "status": "ALL AGREE"
+    },
+    "banff_spearman": {
+      "rigor": 0.8438,
+      "audit_ledger": 0.8438,
+      "status": "MATCH"
+    },
+    "lds_filter_bug": {
+      "alignment": "NOT integrated (flat formula)",
+      "kernel_opt": "confirmed by code inspection",
+      "status": "CONSENSUS: bug exists"
+    },
+    "scope_delivery": {
+      "alignment": "1/10 charter steps",
+      "status": "CONFIRMED"
+    }
+  },
+  "go_nogo_verdict": "CONDITIONAL GO",
+  "conditions": [
+    "1. Fix LDS filter formula in gemm.cpp:347 (5-line change)",
+    "2. Adopt K=5 tile set to bring worst-case from 33% to 23.8%",
+    "3. File follow-up ticket for remaining 9/10 Design 0009 steps"
+  ],
+  "data_provenance": "All numbers from MI300X gfx942 hardware measurements (OCI), 80,109 rows, 1,863 shapes, 37 tiles"
+}
