@@ -1,0 +1,39 @@
+{
+  "source": "task chat history system messages [VERIFIED]",
+  "round_0a_exec_reeval": {
+    "teams": {
+      "alignment": 7.38,
+      "rigor": 8.15,
+      "benchmarking": 7.85,
+      "internal-auditor": 10.75
+    },
+    "total": 34.13,
+    "accepted": 0,
+    "exhausted": 4
+  },
+  "round_0b_recovery": {
+    "teams": {
+      "alignment": 10.73,
+      "rigor": 9.97,
+      "benchmarking": 5.41,
+      "internal-auditor": 8.83
+    },
+    "total": 34.94,
+    "accepted": 3,
+    "exhausted": 1
+  },
+  "round_1_pm": {
+    "teams": {
+      "alignment": 8.18,
+      "rigor": 10.2,
+      "benchmarking": 11.08,
+      "kernel-opt": 12.44,
+      "internal-auditor": 9.77
+    },
+    "total": 51.67,
+    "accepted": 3,
+    "exhausted": 2
+  },
+  "grand_total": 120.74,
+  "acceptance_rate": "6/13 team-rounds accepted (46.2%)"
+}

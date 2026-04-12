@@ -1,0 +1,6 @@
+team,verdict,conditions,accepted_in_r1,cycle
+alignment,CONDITIONAL-GO,3,True,2
+rigor,ALL 4 CHECKPOINTS PASS,0,True,2
+benchmarking,"K=3 mean 3.06%, K=5 recommended",0,False,2
+kernel-opt,3 cost-model defects identified,0,False,2
+internal-auditor,CONDITIONAL-GO,2,True,2
