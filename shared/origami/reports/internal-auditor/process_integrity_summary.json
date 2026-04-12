@@ -1,0 +1,10 @@
+{
+  "exact_sentence_duplicates_across_teams": 0,
+  "teams_flagging_16v1863_disconnect": 2,
+  "teams_flagging_top1_concern": 2,
+  "teams_flagging_regret_concern": 0,
+  "teams_flagging_scope_question": 0,
+  "total_risk_flags": 4,
+  "max_possible_flags": 20,
+  "flag_coverage_pct": 20.0
+}

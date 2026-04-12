@@ -1,0 +1,38 @@
+{
+  "total_unique_tiles_audited": 21,
+  "lds_limit_bytes": 65536,
+  "lds_limit_KB": 64,
+  "gpu": "MI300X gfx942",
+  "pipeline_default": "2-stage",
+  "status_counts": {
+    "both_accept": 3,
+    "both_reject": 2,
+    "false_accept": 16,
+    "false_reject": 0
+  },
+  "invalid_picks_in_harness": [
+    {
+      "tile": "16x256x128",
+      "lds_bytes": 69632,
+      "shapes": [
+        "1x16384x16384_bf16_r",
+        "1x13312x16384_bf16_r"
+      ]
+    },
+    {
+      "tile": "192x96x128",
+      "lds_bytes": 73728,
+      "shapes": [
+        "1536x3584x3584_f16_r"
+      ]
+    },
+    {
+      "tile": "128x192x128",
+      "lds_bytes": 81920,
+      "shapes": [
+        "128x13312x16384_bf16_r"
+      ]
+    }
+  ],
+  "note": "For 2-stage pipeline (Banff default), origami check_lds_capacity() formula is CORRECT: LDS = M*K*bytes + N*K*bytes. The bug was in correlation_harness.py which never called this check."
+}

@@ -1,0 +1,97 @@
+{
+  "audit_timestamp": "2026-04-12T06:45:00Z",
+  "similarity_matrix": {
+    "alignment_vs_benchmarking": 0.0095,
+    "alignment_vs_internal-auditor": 0.0004,
+    "alignment_vs_kernel-opt": 0.0003,
+    "alignment_vs_optimization": 0.0023,
+    "alignment_vs_research": 0.0012,
+    "alignment_vs_rigor": 0.0115,
+    "alignment_vs_slurm": 0.0014,
+    "alignment_vs_validation": 0.0002,
+    "benchmarking_vs_internal-auditor": 0.0006,
+    "benchmarking_vs_kernel-opt": 0.0008,
+    "benchmarking_vs_optimization": 0.0006,
+    "benchmarking_vs_research": 0.0017,
+    "benchmarking_vs_rigor": 0.0134,
+    "benchmarking_vs_slurm": 0.0007,
+    "benchmarking_vs_validation": 0.0004,
+    "internal-auditor_vs_kernel-opt": 0.0009,
+    "internal-auditor_vs_optimization": 0.0027,
+    "internal-auditor_vs_research": 0.0013,
+    "internal-auditor_vs_rigor": 0.0021,
+    "internal-auditor_vs_slurm": 0.0016,
+    "internal-auditor_vs_validation": 0.0007,
+    "kernel-opt_vs_optimization": 0.0,
+    "kernel-opt_vs_research": 0.0023,
+    "kernel-opt_vs_rigor": 0.0003,
+    "kernel-opt_vs_slurm": 0.0023,
+    "kernel-opt_vs_validation": 0.0014,
+    "optimization_vs_research": 0.0004,
+    "optimization_vs_rigor": 0.0007,
+    "optimization_vs_slurm": 0.0004,
+    "optimization_vs_validation": 0.0021,
+    "research_vs_rigor": 0.0017,
+    "research_vs_slurm": 0.0088,
+    "research_vs_validation": 0.0021,
+    "rigor_vs_slurm": 0.0011,
+    "rigor_vs_validation": 0.0005,
+    "slurm_vs_validation": 0.0018
+  },
+  "max_similarity": {
+    "pair": [
+      "benchmarking",
+      "rigor"
+    ],
+    "jaccard": 0.0134
+  },
+  "risk_flag_coverage": {
+    "regret_concern": {
+      "alignment": "FLAGGED",
+      "rigor": "FLAGGED",
+      "benchmarking": "MISSED",
+      "optimization": "FLAGGED",
+      "research": "MISSED",
+      "slurm": "MISSED",
+      "kernel-opt": "MISSED",
+      "validation": "FLAGGED",
+      "internal-auditor": "FLAGGED"
+    },
+    "scope_deferral_K018": {
+      "alignment": "MISSED",
+      "rigor": "MISSED",
+      "benchmarking": "MISSED",
+      "optimization": "FLAGGED",
+      "research": "MISSED",
+      "slurm": "MISSED",
+      "kernel-opt": "MISSED",
+      "validation": "MISSED",
+      "internal-auditor": "FLAGGED"
+    },
+    "16_vs_1863_gap": {
+      "alignment": "MISSED",
+      "rigor": "MISSED",
+      "benchmarking": "FLAGGED",
+      "optimization": "MISSED",
+      "research": "MISSED",
+      "slurm": "FLAGGED",
+      "kernel-opt": "MISSED",
+      "validation": "MISSED",
+      "internal-auditor": "FLAGGED"
+    },
+    "top1_concern": {
+      "alignment": "MISSED",
+      "rigor": "MISSED",
+      "benchmarking": "MISSED",
+      "optimization": "MISSED",
+      "research": "MISSED",
+      "slurm": "MISSED",
+      "kernel-opt": "MISSED",
+      "validation": "MISSED",
+      "internal-auditor": "FLAGGED"
+    }
+  },
+  "total_risk_flags": 11,
+  "total_risk_cells": 36,
+  "independence_verdict": "PASS"
+}

@@ -1,0 +1,34 @@
+{
+  "total_configs": 11574,
+  "old_filter_pass": 11574,
+  "old_filter_reject": 0,
+  "new_filter_pass": 10288,
+  "new_filter_reject": 1286,
+  "newly_rejected": 1286,
+  "expected": 1286,
+  "deviation": 0,
+  "deviation_pct": 0,
+  "csv_flat_matches": 11574,
+  "csv_triton_matches": 11574,
+  "csv_flat_mismatches": 0,
+  "csv_triton_mismatches": 0,
+  "oracle_tiles_rejected": 0,
+  "oracle_details": {},
+  "shapes_with_oracle_loss": 0,
+  "banff_shapes_with_oracle_loss": 0,
+  "unique_rejected_tiles": 2,
+  "stage_breakdown": {
+    "2": {
+      "total": 8359,
+      "old_pass": 8359,
+      "new_pass": 8359,
+      "newly_rejected": 0
+    },
+    "3": {
+      "total": 3215,
+      "old_pass": 3215,
+      "new_pass": 1929,
+      "newly_rejected": 1286
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "alignment": {
+    "word_count": 2006,
+    "line_count": 126,
+    "verified_tags": 1,
+    "estimated_tags": 0,
+    "est_removed_tags": 0,
+    "sentences_gt40": 41,
+    "flags_16_vs_1863": false,
+    "flags_top1_concern": true,
+    "flags_regret_concern": false,
+    "flags_scope_question": false,
+    "mentions_k018": true,
+    "references_data_files": true
+  },
+  "rigor": {
+    "word_count": 2346,
+    "line_count": 144,
+    "verified_tags": 1,
+    "estimated_tags": 0,
+    "est_removed_tags": 0,
+    "sentences_gt40": 42,
+    "flags_16_vs_1863": false,
+    "flags_top1_concern": false,
+    "flags_regret_concern": false,
+    "flags_scope_question": false,
+    "mentions_k018": false,
+    "references_data_files": true
+  },
+  "benchmarking": {
+    "word_count": 2108,
+    "line_count": 124,
+    "verified_tags": 8,
+    "estimated_tags": 0,
+    "est_removed_tags": 0,
+    "sentences_gt40": 34,
+    "flags_16_vs_1863": true,
+    "flags_top1_concern": false,
+    "flags_regret_concern": false,
+    "flags_scope_question": false,
+    "mentions_k018": false,
+    "references_data_files": true
+  },
+  "optimization": {
+    "word_count": 619,
+    "line_count": 44,
+    "verified_tags": 6,
+    "estimated_tags": 0,
+    "est_removed_tags": 0,
+    "sentences_gt40": 20,
+    "flags_16_vs_1863": false,
+    "flags_top1_concern": true,
+    "flags_regret_concern": false,
+    "flags_scope_question": false,
+    "mentions_k018": true,
+    "references_data_files": true
+  },
+  "internal-auditor": {
+    "word_count": 2370,
+    "line_count": 179,
+    "verified_tags": 21,
+    "estimated_tags": 0,
+    "est_removed_tags": 0,
+    "sentences_gt40": 79,
+    "flags_16_vs_1863": true,
+    "flags_top1_concern": false,
+    "flags_regret_concern": false,
+    "flags_scope_question": false,
+    "mentions_k018": false,
+    "references_data_files": true
+  }
+}
