@@ -1,0 +1,33 @@
+{
+  "total_tflops_gap": 1563.5469400000002,
+  "fat_tail_count": 5,
+  "fat_tail_tflops_gap": 913.1668500000001,
+  "nk_ratio_pearson_correlation": 0.2836163361377209,
+  "model_picks_higher_nk": 11,
+  "root_causes": {
+    "BLOCK_N_overvaluation": {
+      "count": 2,
+      "total_regret_pp": 55.09409671115435
+    },
+    "BLOCK_N_over + BLOCK_K_under": {
+      "count": 5,
+      "total_regret_pp": 87.55274077277335
+    },
+    "tile_area_overvaluation": {
+      "count": 4,
+      "total_regret_pp": 70.78100160746405
+    },
+    "BLOCK_M_misrank": {
+      "count": 1,
+      "total_regret_pp": 28.71874656807116
+    },
+    "general_misrank": {
+      "count": 3,
+      "total_regret_pp": 38.04468477537579
+    }
+  },
+  "source_file": "banff_data/correlation_results.json",
+  "hardware": "MI300X gfx942 (Banff cluster)",
+  "cost_model_scoring": "gemm.cpp:862: L_tile_single = max(L_compute*w_compute, L_mem*w_memory)",
+  "tie_breaker": "origami.cpp:570-676: arithmetic_intensity then problem-dimension heuristic"
+}
