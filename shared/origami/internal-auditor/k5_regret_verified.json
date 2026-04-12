@@ -1,0 +1,110 @@
+{
+  "corpus_file": "merged_full_corpus.csv",
+  "total_measurements": 109367,
+  "n_shapes": 2367,
+  "hardware": "MI300X gfx942 (304 CU, 64KB LDS)",
+  "cluster": "OCI banff-cyxtera",
+  "k3_regret": {
+    "mean": 8.96,
+    "median": 8.48,
+    "p95": 18.81,
+    "p99": 33.79,
+    "max": 43.84,
+    "std": 6.85
+  },
+  "k5_regret": {
+    "mean": 13.03,
+    "median": 13.18,
+    "p95": 24.06,
+    "p99": 41.77,
+    "max": 54.44
+  },
+  "top1_regret": {
+    "mean": 4.64,
+    "median": 3.07,
+    "p95": 14.12,
+    "max": 18.25
+  },
+  "oracle_tflops": {
+    "max": NaN,
+    "mean": NaN,
+    "min": NaN
+  },
+  "category_breakdown": {
+    "compute_bound": {
+      "n_shapes": 586,
+      "k3_mean_regret": 6.46,
+      "k3_max_regret": 36.77,
+      "k5_mean_regret": 9.72,
+      "k5_max_regret": 44.27
+    },
+    "medium_batch": {
+      "n_shapes": 786,
+      "k3_mean_regret": 11.67,
+      "k3_max_regret": 43.84,
+      "k5_mean_regret": 16.62,
+      "k5_max_regret": 54.44
+    },
+    "decode": {
+      "n_shapes": 187,
+      "k3_mean_regret": 8.14,
+      "k3_max_regret": 17.7,
+      "k5_mean_regret": 12.85,
+      "k5_max_regret": 26.91
+    },
+    "small_batch": {
+      "n_shapes": 808,
+      "k3_mean_regret": 8.33,
+      "k3_max_regret": 19.55,
+      "k5_mean_regret": 11.97,
+      "k5_max_regret": 27.37
+    }
+  },
+  "top5_worst_k3_regret": [
+    {
+      "shape": "64x8192x28672",
+      "oracle_tflops": 161.378,
+      "category": "medium_batch",
+      "n_tiles": 18,
+      "k3_regret_pct": 43.84,
+      "k5_regret_pct": 54.44,
+      "top1_regret_pct": 0.16
+    },
+    {
+      "shape": "128x8192x28672",
+      "oracle_tflops": 293.739,
+      "category": "medium_batch",
+      "n_tiles": 18,
+      "k3_regret_pct": 39.96,
+      "k5_regret_pct": 46.2,
+      "top1_regret_pct": 1.83
+    },
+    {
+      "shape": "64x13312x16384",
+      "oracle_tflops": 216.17,
+      "category": "medium_batch",
+      "n_tiles": 18,
+      "k3_regret_pct": 36.97,
+      "k5_regret_pct": 47.39,
+      "top1_regret_pct": 1.47
+    },
+    {
+      "shape": "160x4096x14336",
+      "oracle_tflops": 237.422,
+      "category": "medium_batch",
+      "n_tiles": 61,
+      "k3_regret_pct": 36.85,
+      "k5_regret_pct": 41.82,
+      "top1_regret_pct": 0.44
+    },
+    {
+      "shape": "192x4096x14336",
+      "oracle_tflops": 285.149,
+      "category": "medium_batch",
+      "n_tiles": 61,
+      "k3_regret_pct": 36.83,
+      "k5_regret_pct": 43.0,
+      "top1_regret_pct": 0.36
+    }
+  ]
+}
