@@ -1,0 +1,6 @@
+shape,category,regret_pct,oracle_tflops,picked_tflops,tflops_gap,oracle_tile,picked_tile,oracle_proxy_rank,root_cause,fix_type,wave_quant_oracle,wave_quant_pick,lds_oracle_bytes,lds_pick_bytes,source
+2048x4096x5376_bf16,prefill,35.7,1014.450,652.400,362.050,256x128x64,256x224x64,14,cost_model_BLOCK_N_overvaluation,reranker_fix,0.842,0.500,49152,61440,MI300X Tensile sweep (regret_decomposition_summary.csv)
+1x16384x16384_bf16,decode,29.3,6.576,4.648,1.928,16x32x512,16x256x128,4,cost_model_BLOCK_K_undervaluation,deep_K_variant,1.684,0.211,49152,69632,MI300X Tensile sweep (regret_decomposition_summary.csv)
+1x13312x16384_bf16,decode,29.1,6.342,4.497,1.845,64x64x256,16x256x128,73,severe_cost_model_misrank,needs_autotuning,1.368,0.211,65536,69632,MI300X Tensile sweep (regret_decomposition_summary.csv)
+3600x4096x4096_bf16,prefill,28.7,1092.680,778.876,313.804,256x256x64,192x256x64,1,tile_handoff_bug_wave_quant,grid_model_fix,0.789,1.000,65536,57344,MI300X Tensile sweep (regret_decomposition_summary.csv)
+1536x3584x3584_f16,prefill,24.0,743.126,564.925,178.201,128x192x64,192x96x128,35,cost_model_tile_area_bias,reranker_fix,0.533,1.000,40960,73728,MI300X Tensile sweep (regret_decomposition_summary.csv)
