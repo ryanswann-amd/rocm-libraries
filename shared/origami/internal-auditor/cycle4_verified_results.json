@@ -1,0 +1,49 @@
+{
+  "description": "K-016 Cycle 4 Internal Auditor \u2014 K=3 vs K=5 regret from measured corpus",
+  "source": "slurm/merged_full_corpus.csv (MI300X gfx942, OCI cluster)",
+  "n_shapes": 2287,
+  "n_measurements": 73651,
+  "timestamp": "2026-04-12T12:38:37.317647",
+  "node": "vegeta",
+  "k3_stats": {
+    "mean": 5.5627,
+    "p50": 0.0,
+    "p95": 28.865,
+    "p99": 58.0454,
+    "max": 100.0,
+    "flop_weighted_mean": 1.6187,
+    "flop_weighted_p95": 4.8065,
+    "flop_weighted_p99": 27.0225,
+    "zero_regret_count": 1215
+  },
+  "k5_stats": {
+    "mean": 3.9839,
+    "p50": 0.0,
+    "p95": 25.8973,
+    "p99": 58.0454,
+    "max": 100.0,
+    "flop_weighted_mean": 1.3098,
+    "flop_weighted_p95": 4.8057,
+    "flop_weighted_p99": 14.8691,
+    "zero_regret_count": 1456
+  },
+  "slo_recommendation": {
+    "binding_metric": "FLOP-weighted P95",
+    "rationale": "Reflects actual GPU compute budget lost. Shape-count P95 overweights decode shapes (0.11% of total FLOPs) which inflate unweighted tails.",
+    "k3_thresholds": {
+      "flop_weighted_mean": "\u22645.0%",
+      "flop_weighted_p95": "\u226415.0%",
+      "shape_count_p95": "\u226420.0%"
+    },
+    "k5_thresholds": {
+      "flop_weighted_mean": "\u22642.0%",
+      "flop_weighted_p95": "\u22648.0%",
+      "shape_count_p95": "\u226412.0%"
+    }
+  },
+  "cross_validation": {
+    "matched_shapes": 1863,
+    "max_delta_pp": 51.265434,
+    "all_within_0_1pp": false
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "description": "K=5 regret computed from MI300X corpus, using benchmarking oracle (37-tile sweep)",
+  "source_oracle": "benchmarking/k3_per_shape_regret.csv (oracle_tflops column)",
+  "source_k5_tiles": "slurm/merged_full_corpus.csv (MI300X, 80K+ rows)",
+  "hardware": "MI300X gfx942, OCI cluster (banff-cyxtera)",
+  "n_shapes": 1863,
+  "k3": {
+    "mean": 3.0615,
+    "p50": 0.0,
+    "p95": 16.5099,
+    "max": 32.9882,
+    "flop_wt_mean": 4.5362,
+    "flop_wt_p95": 27.2569,
+    "zero_regret": 1093
+  },
+  "k5": {
+    "mean": 1.0445,
+    "p50": 0.0,
+    "p95": 6.146,
+    "max": 23.7984,
+    "flop_wt_mean": 1.3419,
+    "flop_wt_p95": 8.5448,
+    "zero_regret": 1353
+  },
+  "improvement": {
+    "mean_pp": 2.017,
+    "flop_wt_mean_pp": 3.1943,
+    "flop_wt_p95_pp": 18.7121,
+    "new_zero_regret": 260
+  }
+}
