@@ -1,0 +1,107 @@
+{
+  "cycle": 5,
+  "timestamp": "2026-04-12",
+  "hardware": "MI300X gfx942, 304 CU, 64KB LDS, OCI cluster",
+  "data_source": "merged_full_corpus.csv (80,109 MI300X rows, 1,863 shapes, 37 tiles)",
+  "reviewer_requested_deepening": {
+    "item_1_worst_case_root_cause": {
+      "shapes_above_25pct_k3": 68,
+      "all_compute_bound_or_medium_batch": true,
+      "structural_cause": "M in [288-448] with large N*K; oracle tile is 128x256x64 which is outside K=3 set",
+      "resolved_by_k5": 36,
+      "still_above_10pct_k5": 3,
+      "worst_5": [
+        {
+          "shape": "64x8192x28672",
+          "k3_regret": 43.84,
+          "k5_regret": 54.44,
+          "category": "medium_batch"
+        },
+        {
+          "shape": "128x8192x28672",
+          "k3_regret": 39.96,
+          "k5_regret": 46.2,
+          "category": "medium_batch"
+        },
+        {
+          "shape": "64x13312x16384",
+          "k3_regret": 36.97,
+          "k5_regret": 47.39,
+          "category": "medium_batch"
+        },
+        {
+          "shape": "160x4096x14336",
+          "k3_regret": 36.85,
+          "k5_regret": 41.82,
+          "category": "medium_batch"
+        },
+        {
+          "shape": "192x4096x14336",
+          "k3_regret": 36.83,
+          "k5_regret": 43.0,
+          "category": "medium_batch"
+        }
+      ]
+    },
+    "item_2_k5_worst_case_validated": {
+      "k5_worst_case_pct": 23.8,
+      "k5_mean_pct": 1.06,
+      "k5_p95_pct": 6.21,
+      "below_25pct_threshold": true,
+      "source": "benchmarking/final_verified_analysis.json k_trace[K=5]"
+    },
+    "item_3_figure_confirmed": {
+      "file": "key_result_internal-auditor.png",
+      "panels": [
+        "A: K-scaling with worst annotated",
+        "B: K3 vs K5 histogram",
+        "C: Top-10 worst shapes anatomy",
+        "D: GO/NO-GO gates"
+      ],
+      "contains_k5_distribution": true
+    }
+  },
+  "cross_team_agreement": {
+    "k3_mean_regret": {
+      "rigor": 3.06,
+      "benchmarking": 3.06,
+      "auditor": 3.0615,
+      "delta_pp": 0.0015
+    },
+    "k3_worst_regret": {
+      "rigor": 33.0,
+      "benchmarking": 32.99,
+      "auditor": 32.99,
+      "delta_pp": 0.01
+    },
+    "k5_mean_regret": {
+      "rigor": 1.06,
+      "benchmarking": 1.06,
+      "auditor": 1.06,
+      "delta_pp": 0.0
+    },
+    "k5_worst_regret": {
+      "rigor": 23.8,
+      "benchmarking": 23.8,
+      "auditor": 23.8,
+      "delta_pp": 0.0
+    },
+    "banff_spearman": {
+      "rigor": 0.8438,
+      "auditor": 0.8438,
+      "delta_pp": 0.0
+    }
+  },
+  "dispersion_metrics": {
+    "k3_std_pct": 6.8509,
+    "k3_iqr_pct": 10.135,
+    "k3_cv_std_across_folds": 0.1299,
+    "k3_gen_gap_pp": 0.0001
+  },
+  "go_nogo_verdict": "CONDITIONAL GO",
+  "conditions": [
+    "1. Fix LDS filter formula in gemm.cpp:347 (5-line change)",
+    "2. Adopt K=5 tile set {128x64x128, 16x64x128, 128x128x128, 16x16x256, 128x256x64}",
+    "3. File follow-up ticket for remaining 9/10 Design 0009 charter steps"
+  ]
+}
