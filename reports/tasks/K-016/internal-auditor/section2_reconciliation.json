@@ -1,0 +1,99 @@
+{
+  "audit_date": "2026-04-12",
+  "data_source": "correlation_results.json (16 Banff shapes, MI300X, 3 GPUs)",
+  "section2_total_rows": 16,
+  "section2_total_cells_audited": 80,
+  "clean_cells": 72,
+  "discrepant_cells": 8,
+  "discrepant_rows": 4,
+  "root_cause": "Section 2 table sourced from comprehensive_analysis_results.json which used LDS-unfiltered tile picks. correlation_results.json (n_lds_filtered=25) has the correct LDS-filtered values.",
+  "discrepancies": [
+    {
+      "shape": "1x16384x16384_bf16_r",
+      "column": "regret",
+      "table_value": 29.3,
+      "raw_value": 32.2
+    },
+    {
+      "shape": "1x16384x16384_bf16_r",
+      "column": "picked_tile",
+      "table_value": "16x256x128",
+      "raw_value": "16x256x64"
+    },
+    {
+      "shape": "1x13312x16384_bf16_r",
+      "column": "regret",
+      "table_value": 29.1,
+      "raw_value": 30.8
+    },
+    {
+      "shape": "1x13312x16384_bf16_r",
+      "column": "picked_tile",
+      "table_value": "16x256x128",
+      "raw_value": "16x256x64"
+    },
+    {
+      "shape": "1536x3584x3584_f16_r",
+      "column": "regret",
+      "table_value": 24.0,
+      "raw_value": 31.4
+    },
+    {
+      "shape": "1536x3584x3584_f16_r",
+      "column": "picked_tile",
+      "table_value": "192x96x128",
+      "raw_value": "256x224x64"
+    },
+    {
+      "shape": "128x13312x16384_bf16_r",
+      "column": "regret",
+      "table_value": 20.8,
+      "raw_value": 3.0
+    },
+    {
+      "shape": "128x13312x16384_bf16_r",
+      "column": "picked_tile",
+      "table_value": "128x192x128",
+      "raw_value": "128x224x64"
+    }
+  ],
+  "k3_spot_check": {
+    "sample_size": 12,
+    "seed": 42,
+    "match_rate": "12/12",
+    "total_rows": 1863
+  },
+  "lds_filter": {
+    "predicate": "LDS = (BLOCK_M * BLOCK_K + BLOCK_N * BLOCK_K) * dtype_bytes * num_stages <= 65536",
+    "limit_bytes": 65536,
+    "gpu": "MI300X gfx942",
+    "tiles_affected": 3,
+    "shapes_affected": 4,
+    "invalid_tiles": [
+      "16x256x128 (69632B)",
+      "192x96x128 (73728B)",
+      "128x192x128 (81920B)"
+    ]
+  },
+  "top5_impact": {
+    "membership_changed": false,
+    "ordering_changed": true,
+    "original_order": [
+      "2048x4096x5376_bf16_r",
+      "1x16384x16384_bf16_r",
+      "1x13312x16384_bf16_r",
+      "3600x4096x4096_bf16_r",
+      "1536x3584x3584_f16_r"
+    ],
+    "corrected_order": [
+      "2048x4096x5376_bf16_r",
+      "1x16384x16384_bf16_r",
+      "1536x3584x3584_f16_r",
+      "1x13312x16384_bf16_r",
+      "3600x4096x4096_bf16_r"
+    ],
+    "avg_regret_original": 17.8777,
+    "avg_regret_corrected": 17.512,
+    "difference_pp": -0.3657
+  }
+}
