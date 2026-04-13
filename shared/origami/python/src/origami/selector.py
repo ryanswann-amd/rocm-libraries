@@ -692,7 +692,7 @@ class OrigamiMatmulSelector:
         """Compute StreamK grid size for Triton backend.
 
         Triton-specific grid model with custom split factors and last-wave
-        remainder handling tuned for AMD MI300X/MI355X.
+        remainder handling tuned for AMD CDNA3/CDNA4 GPUs.
         """
         split_factors = [8, 6, 4, 3, 2, 1]
         tile_fractions = [0.0, 1.0 / 2.0, 1.0 / 8.0, 1.0 / 5.0, 1.0 / 4.0, 1.0 / 3.0]
