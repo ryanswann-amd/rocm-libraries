@@ -437,7 +437,10 @@ class OrigamiMatmulSelector:
         problem.b_dtype         = b_origami_dtype
         problem.c_dtype         = c_origami_dtype
         problem.d_dtype         = c_origami_dtype
-        problem.mi_dtype        = c_origami_dtype
+        # Use input-derived MI dtype for matrix instruction latency lookup.
+        # The matrix instruction type is determined by input operand types,
+        # not the output type (e.g., FP8 inputs with BF16 output use FP8 MIs).
+        problem.mi_dtype        = origami.string_to_datatype(self.mi_dtype)
         problem.a_mx_block_size = self._mx_block_size
         problem.b_mx_block_size = self._mx_block_size
     
