@@ -125,12 +125,10 @@ def main():
                       f"age={s['_age_hours']}h")
 
             if args.cancel:
-                # Mark as stale in registry (actual scancel must be done
-                # via slurm_gpu_run.py bridge or manually)
-                print("\n[ACTION] Marking stale jobs in registry...")
-                # We need to update the registry file
+                print("\n[ACTION] Cancelling stale jobs...")
                 updated_entries = []
                 stale_ids = {s["batch_id"] for s in stale}
+                cancelled_count = 0
                 with open(args.registry, "r") as f:
                     for line in f:
                         try:
@@ -141,16 +139,30 @@ def main():
                                 entry["stale_at"] = datetime.now().isoformat()
                                 job_id = entry.get("slurm_job_id")
                                 if job_id and job_id != "unknown":
-                                    print(f"  -> Cancel job {job_id}: "
-                                          f"python3 tools/slurm_gpu_run.py "
-                                          f"cancel {job_id}")
+                                    # Attempt scancel via subprocess
+                                    try:
+                                        import subprocess
+                                        result = subprocess.run(
+                                            ["scancel", str(job_id)],
+                                            capture_output=True, text=True,
+                                            timeout=10)
+                                        if result.returncode == 0:
+                                            print(f"  -> Cancelled job {job_id}")
+                                            cancelled_count += 1
+                                        else:
+                                            print(f"  -> scancel {job_id} "
+                                                  f"failed: {result.stderr.strip()}")
+                                    except (FileNotFoundError, subprocess.TimeoutExpired):
+                                        print(f"  -> scancel not available; "
+                                              f"manually cancel job {job_id}")
                             updated_entries.append(entry)
                         except json.JSONDecodeError:
                             continue
                 with open(args.registry, "w") as f:
                     for entry in updated_entries:
                         f.write(json.dumps(entry) + "\n")
-                print(f"[ACTION] {len(stale)} jobs marked as stale")
+                print(f"[ACTION] {len(stale)} jobs marked stale, "
+                      f"{cancelled_count} cancelled via scancel")
         else:
             print(f"[STALE] No stale jobs found "
                   f"(threshold: {args.stale_timeout / 3600:.1f}h)")

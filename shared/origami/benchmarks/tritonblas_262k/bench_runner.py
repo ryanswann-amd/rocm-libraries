@@ -176,7 +176,7 @@ TRANS_MAP = {
 }
 
 
-def process_problem(row, hardware, configs_cache):
+def process_problem(row, hardware, configs_cache, fallback_idx=0):
     """Run origami config selection for a single problem.
 
     Returns dict with results or error info.
@@ -188,6 +188,8 @@ def process_problem(row, hardware, configs_cache):
     out_dt = row.get("out_dtype", "f16")
     a_trans = row.get("a_trans", "T")
     b_trans = row.get("b_trans", "N")
+    # Use idx from CSV if present, otherwise use fallback
+    problem_idx = row.get("idx", str(fallback_idx))
 
     # Use cached configs for this dtype, or generate
     cache_key = a_dt  # configs depend on input dtype for MI selection
@@ -196,7 +198,7 @@ def process_problem(row, hardware, configs_cache):
     configs = configs_cache[cache_key]
 
     if not configs:
-        return {"idx": row["idx"], "m": m, "n": n, "k": k, "batch": batch,
+        return {"idx": problem_idx, "m": m, "n": n, "k": k, "batch": batch,
                 "a_dtype": a_dt, "b_dtype": b_dt, "out_dtype": out_dt,
                 "a_trans": a_trans, "b_trans": b_trans,
                 "status": "no_configs", "error": f"No configs for dtype {a_dt}"}
@@ -222,7 +224,7 @@ def process_problem(row, hardware, configs_cache):
 
         cfg = result.config
         return {
-            "idx": row["idx"], "m": m, "n": n, "k": k, "batch": batch,
+            "idx": problem_idx, "m": m, "n": n, "k": k, "batch": batch,
             "a_dtype": a_dt, "b_dtype": b_dt, "out_dtype": out_dt,
             "a_trans": a_trans, "b_trans": b_trans,
             "status": "ok",
@@ -236,7 +238,7 @@ def process_problem(row, hardware, configs_cache):
         }
     except Exception as e:
         return {
-            "idx": row["idx"], "m": m, "n": n, "k": k, "batch": batch,
+            "idx": problem_idx, "m": m, "n": n, "k": k, "batch": batch,
             "a_dtype": a_dt, "b_dtype": b_dt, "out_dtype": out_dt,
             "a_trans": a_trans, "b_trans": b_trans,
             "status": "error", "error": str(e),
@@ -324,7 +326,8 @@ def main():
             if global_idx <= resume_from:
                 continue
 
-            result = process_problem(row, hardware, configs_cache)
+            result = process_problem(row, hardware, configs_cache,
+                                     fallback_idx=global_idx)
             writer.writerow(result)
             n_processed += 1
 
