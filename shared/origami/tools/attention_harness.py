@@ -25,19 +25,19 @@ import time
 import origami
 
 
-ARCH_MAP = {
-    "gfx90a":  origami.architecture_t.gfx90a,
-    "gfx942":  origami.architecture_t.gfx942,
-    "gfx950":  origami.architecture_t.gfx950,
-    "gfx1100": origami.architecture_t.gfx1100,
-    "gfx1151": origami.architecture_t.gfx1151,
-    "gfx1201": origami.architecture_t.gfx1201,
-}
+def _build_arch_map():
+    """Build architecture map from all available origami architectures."""
+    arch_map = {}
+    for name in dir(origami.architecture_t):
+        if name.startswith("gfx"):
+            arch_map[name] = getattr(origami.architecture_t, name)
+    return arch_map
+
+ARCH_MAP = _build_arch_map()
 
 DEFAULT_HW_PARAMS = {
     "gfx942": {"N_CU": 304, "lds_capacity": 65536, "L2_capacity": 4_000_000, "clock_khz": 2_100_000},
     "gfx90a": {"N_CU": 110, "lds_capacity": 65536, "L2_capacity": 8_000_000, "clock_khz": 1_700_000},
-    "gfx950": {"N_CU": 256, "lds_capacity": 65536, "L2_capacity": 4_000_000, "clock_khz": 2_100_000},
     "gfx906": {"N_CU": 60,  "lds_capacity": 65536, "L2_capacity": 4_000_000, "clock_khz": 1_802_000},
 }
 

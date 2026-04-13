@@ -307,8 +307,8 @@ size_t round_elements_to_128B(size_t elements, size_t element_size_bits) {
 /* ======================================================================================== */
 
 // VALU throughput: elements processed per cycle per CU.
-// CDNA3 (gfx942/gfx950): 4 SIMDs x 16 lanes / 4-cycle issue = 16 elem/cyc
-// RDNA3+ (gfx1100/gfx1201): 2 SIMDs x 32 lanes / 4-cycle issue = 16 elem/cyc
+// CDNA3 (gfx942+): 4 SIMDs x 16 lanes / 4-cycle issue = 16 elem/cyc
+// RDNA3+ (gfx1100+): 2 SIMDs x 32 lanes / 4-cycle issue = 16 elem/cyc
 static constexpr double VALU_ELEMENTS_PER_CYCLE = 16.0;
 
 // LDS bandwidth per CU in bytes/cycle (128B/cycle for one 128B transaction)
