@@ -528,7 +528,7 @@ def generate_plots(results, output_dir):
     if not shapes_data:
         return
 
-    # ── Plot 1: Predicted vs Measured TFLOPS scatter ──────────────────────
+    # ── Plot 1: Predicted vs Measured LATENCY scatter ─────────────────────
     fig, axes = plt.subplots(2, 4, figsize=(20, 10))
     axes = axes.flatten()
 
@@ -537,46 +537,52 @@ def generate_plots(results, output_dir):
         if ax is None:
             break
 
-        measured = []
-        predicted = []
+        measured_lat = []
+        predicted_lat = []
         tile_labels = []
 
         for tile_key, td in sd.get('tile_results', {}).items():
-            if td.get('measured_tflops') and td.get('analytical_tflops'):
-                measured.append(td['measured_tflops'])
-                predicted.append(td['analytical_tflops'])
+            if td.get('measured_ms') is not None and td.get('analytical_latency_us') is not None:
+                measured_lat.append(td['measured_ms'] * 1000.0)  # ms -> us
+                # Use origami latency if available, else analytical
+                origami = td.get('origami', {})
+                if origami and origami.get('source', '') != 'origami_error':
+                    olat = origami.get('decode_fix_latency_us', origami.get('latency_us'))
+                    predicted_lat.append(olat if olat and olat > 0 else td['analytical_latency_us'])
+                else:
+                    predicted_lat.append(td['analytical_latency_us'])
                 tile_labels.append(tile_key)
 
-        if len(measured) >= 3:
-            rho = spearman_rho(predicted, measured)
-            pr = pearson_r(predicted, measured)
+        if len(measured_lat) >= 3:
+            rho = spearman_rho(predicted_lat, measured_lat)
+            pr = pearson_r(predicted_lat, measured_lat)
 
-            ax.scatter(predicted, measured, s=30, alpha=0.7, edgecolors='black', linewidth=0.3)
+            ax.scatter(predicted_lat, measured_lat, s=30, alpha=0.7, edgecolors='black', linewidth=0.3)
 
             # Diagonal line
-            mn = min(min(predicted), min(measured))
-            mx_val = max(max(predicted), max(measured))
+            mn = min(min(predicted_lat), min(measured_lat))
+            mx_val = max(max(predicted_lat), max(measured_lat))
             ax.plot([mn, mx_val], [mn, mx_val], 'r--', alpha=0.4)
 
-            # Label top-1 tiles
-            best_meas_idx = measured.index(max(measured))
-            best_pred_idx = predicted.index(max(predicted))
-            ax.scatter([predicted[best_meas_idx]], [measured[best_meas_idx]],
-                      s=100, marker='*', c='green', zorder=5, label=f'Best measured: {tile_labels[best_meas_idx]}')
-            ax.scatter([predicted[best_pred_idx]], [measured[best_pred_idx]],
-                      s=100, marker='D', c='red', zorder=5, label=f'Best predicted: {tile_labels[best_pred_idx]}')
+            # Label fastest tiles
+            best_meas_idx = measured_lat.index(min(measured_lat))
+            best_pred_idx = predicted_lat.index(min(predicted_lat))
+            ax.scatter([predicted_lat[best_meas_idx]], [measured_lat[best_meas_idx]],
+                      s=100, marker='*', c='green', zorder=5, label=f'Fastest measured: {tile_labels[best_meas_idx]}')
+            ax.scatter([predicted_lat[best_pred_idx]], [measured_lat[best_pred_idx]],
+                      s=100, marker='D', c='red', zorder=5, label=f'Fastest predicted: {tile_labels[best_pred_idx]}')
 
             ax.set_title(f"{sd['name']}\nSpearman ρ={rho:.3f}, Pearson r={pr:.3f}", fontsize=9)
             ax.legend(fontsize=6, loc='upper left')
         else:
-            ax.text(0.5, 0.5, f"{sd['name']}\nInsufficient data ({len(measured)} tiles)",
+            ax.text(0.5, 0.5, f"{sd['name']}\nInsufficient data ({len(measured_lat)} tiles)",
                    ha='center', va='center', transform=ax.transAxes)
 
-        ax.set_xlabel('Predicted TFLOPS', fontsize=8)
-        ax.set_ylabel('Measured TFLOPS', fontsize=8)
+        ax.set_xlabel('Predicted Latency (μs)', fontsize=8)
+        ax.set_ylabel('Measured Latency (μs)', fontsize=8)
         ax.tick_params(labelsize=7)
 
-    fig.suptitle('K-024: Origami Attention Correlation — Predicted vs Measured TFLOPS\n'
+    fig.suptitle('K-024: Origami Attention Correlation — Predicted vs Measured Latency\n'
                  'GPU benchmarks on MI300X with Triton flash attention kernel',
                  fontsize=12, fontweight='bold')
     plt.tight_layout(rect=[0, 0, 1, 0.93])
@@ -590,23 +596,24 @@ def generate_plots(results, output_dir):
 
     agg = results.get('aggregate', {})
 
-    # Spearman by shape
+    # Spearman by shape (latency-based)
     ax = axes[0]
     shape_names = []
     spearmans = []
     for sd in shapes_data:
         corr = sd.get('correlation', {})
-        if 'spearman_rho' in corr:
+        rho_key = 'spearman_rho_latency' if 'spearman_rho_latency' in corr else 'spearman_rho'
+        if rho_key in corr:
             shape_names.append(sd['name'])
-            spearmans.append(corr['spearman_rho'])
+            spearmans.append(corr[rho_key])
 
     if spearmans:
         colors = ['#2ecc71' if s > 0.7 else '#e74c3c' if s < 0.4 else '#f39c12' for s in spearmans]
         ax.barh(range(len(shape_names)), spearmans, color=colors, edgecolor='black', linewidth=0.5)
         ax.set_yticks(range(len(shape_names)))
         ax.set_yticklabels(shape_names, fontsize=8)
-        ax.set_xlabel('Spearman ρ')
-        ax.set_title('Rank Correlation by Shape')
+        ax.set_xlabel('Spearman ρ (latency)')
+        ax.set_title('Latency Rank Correlation by Shape')
         ax.axvline(x=0.7, color='green', linestyle='--', alpha=0.5)
         ax.set_xlim(-0.2, 1.0)
 
@@ -632,8 +639,8 @@ def generate_plots(results, output_dir):
     ax = axes[2]
     summary_text = [
         f"Shapes tested: {agg.get('n_shapes', 0)}",
-        f"Avg Spearman ρ: {agg.get('avg_spearman', 0):.3f}",
-        f"Avg Pearson r: {agg.get('avg_pearson', 0):.3f}",
+        f"Avg Spearman ρ(lat): {agg.get('avg_spearman_latency', agg.get('avg_spearman', 0)):.3f}",
+        f"Avg Pearson r(lat): {agg.get('avg_pearson_latency', agg.get('avg_pearson', 0)):.3f}",
         f"Top-1 accuracy: {agg.get('top1_accuracy_pct', 0):.0f}%",
         f"Top-3 accuracy: {agg.get('top3_accuracy_pct', 0):.0f}%",
         f"Avg regret: {agg.get('avg_regret_pct', 0):.1f}%",
@@ -733,14 +740,16 @@ def main():
             "warmup": warmup,
             "n_shapes": len(shapes),
             "n_tile_configs": len(tile_configs),
+            "correlation_metric": "latency_us",  # standardized on latency
         },
         "per_shape": [],
     }
 
     # ── Run benchmarks ───────────────────────────────────────────────────
     aggregate = {
-        "spearmans": [],
-        "pearsons": [],
+        "spearmans_latency": [],
+        "pearsons_latency": [],
+        "spearmans_tflops": [],  # kept for comparison
         "regrets": [],
         "top1_hits": 0,
         "top3_hits": 0,
@@ -804,63 +813,88 @@ def main():
             shape_data["tile_results"][tile_key] = tile_data
 
             if tflops is not None:
-                measured_tiles[tile_key] = tflops
-                # Prefer origami prediction for correlation if available
+                meas_lat_us = ms * 1000.0  # ms -> us
+                measured_tiles[tile_key] = {'tflops': tflops, 'latency_us': meas_lat_us}
+
+                # Analytical latency is always available
+                analytical_lat_us = pred['latency_us']
+
+                # Prefer origami latency for correlation if available
+                origami_lat_us = None
                 if origami_pred and origami_pred.get('source') != 'origami_error':
-                    lat_us = origami_pred.get('total_latency_us',
-                             origami_pred.get('latency_us'))
-                    if lat_us and lat_us > 0:
-                        flops = 4.0 * batch * heads * seq_q * seq_kv * head_dim
-                        if causal:
-                            flops *= 0.5
-                        analytical_tiles[tile_key] = flops / (lat_us * 1e-6) / 1e12
-                    else:
-                        analytical_tiles[tile_key] = pred['predicted_tflops']
-                else:
-                    analytical_tiles[tile_key] = pred['predicted_tflops']
-                status = f"{tflops:>7.2f} TFLOPS (pred: {analytical_tiles[tile_key]:.2f})"
+                    # For decode shapes, prefer decode_fix_latency_us
+                    origami_lat_us = origami_pred.get('decode_fix_latency_us',
+                                    origami_pred.get('latency_us'))
+
+                # Best available predicted latency: origami > analytical
+                pred_lat_us = origami_lat_us if (origami_lat_us and origami_lat_us > 0) else analytical_lat_us
+                analytical_tiles[tile_key] = {
+                    'latency_us': pred_lat_us,
+                    'tflops': pred['predicted_tflops'],
+                    'origami_latency_us': origami_lat_us,
+                    'source': 'origami' if (origami_lat_us and origami_lat_us > 0) else 'analytical',
+                }
+
+                status = f"{tflops:>7.2f} TFLOPS  lat={meas_lat_us:.1f}us (pred: {pred_lat_us:.1f}us)"
             else:
                 status = f"SKIP: {err}"
 
             print(f"  {tile_key:>10s}: {status}")
 
-        # ── Correlation for this shape ───────────────────────────────────
+        # ── Correlation for this shape (LATENCY-VS-LATENCY) ──────────────
         if len(measured_tiles) >= 3:
             common_tiles = sorted(measured_tiles.keys())
-            m_vals = [measured_tiles[t] for t in common_tiles]
-            a_vals = [analytical_tiles[t] for t in common_tiles]
+            m_lat = [measured_tiles[t]['latency_us'] for t in common_tiles]
+            a_lat = [analytical_tiles[t]['latency_us'] for t in common_tiles]
+            m_tflops = [measured_tiles[t]['tflops'] for t in common_tiles]
+            a_tflops = [analytical_tiles[t]['tflops'] for t in common_tiles]
 
-            rho = spearman_rho(a_vals, m_vals)
-            pr = pearson_r(a_vals, m_vals)
+            # Primary metric: latency-vs-latency Spearman
+            rho_lat = spearman_rho(a_lat, m_lat)
+            pr_lat = pearson_r(a_lat, m_lat)
+            # Secondary: tflops-vs-tflops for reference
+            rho_tflops = spearman_rho(a_tflops, m_tflops)
 
-            # Oracle and pick
-            oracle_tile = max(measured_tiles, key=lambda t: measured_tiles[t])
-            oracle_tflops = measured_tiles[oracle_tile]
-            pred_best = max(analytical_tiles, key=lambda t: analytical_tiles[t])
-            pred_best_actual = measured_tiles.get(pred_best, 0)
-            regret = (oracle_tflops - pred_best_actual) / oracle_tflops * 100 if oracle_tflops > 0 else 0
+            # Oracle = lowest measured latency (= fastest tile)
+            oracle_tile = min(measured_tiles, key=lambda t: measured_tiles[t]['latency_us'])
+            oracle_tflops = measured_tiles[oracle_tile]['tflops']
+            oracle_lat = measured_tiles[oracle_tile]['latency_us']
+
+            # Pick = lowest predicted latency
+            pred_best = min(analytical_tiles, key=lambda t: analytical_tiles[t]['latency_us'])
+            pred_best_actual_tflops = measured_tiles.get(pred_best, {}).get('tflops', 0)
+            pred_best_actual_lat = measured_tiles.get(pred_best, {}).get('latency_us', float('inf'))
+            regret = (oracle_tflops - pred_best_actual_tflops) / oracle_tflops * 100 if oracle_tflops > 0 else 0
             top1 = oracle_tile == pred_best
 
-            # Top-3
-            top3_pred = sorted(analytical_tiles, key=lambda t: -analytical_tiles[t])[:3]
+            # Top-3 by predicted latency (lowest 3)
+            top3_pred = sorted(analytical_tiles, key=lambda t: analytical_tiles[t]['latency_us'])[:3]
             top3_hit = oracle_tile in top3_pred
 
+            # Determine prediction source (origami vs analytical)
+            pred_sources = [analytical_tiles[t]['source'] for t in common_tiles]
+            origami_count = sum(1 for s in pred_sources if s == 'origami')
+
             corr = {
-                "spearman_rho": rho,
-                "pearson_r": pr,
+                "spearman_rho_latency": rho_lat,
+                "pearson_r_latency": pr_lat,
+                "spearman_rho_tflops": rho_tflops,
                 "n_tiles": len(common_tiles),
                 "oracle_tile": oracle_tile,
                 "oracle_tflops": oracle_tflops,
+                "oracle_latency_us": oracle_lat,
                 "predicted_best": pred_best,
-                "predicted_best_actual_tflops": pred_best_actual,
+                "predicted_best_actual_tflops": pred_best_actual_tflops,
                 "regret_pct": regret,
                 "top1_match": top1,
                 "top3_match": top3_hit,
+                "prediction_source": f"origami:{origami_count}/{len(common_tiles)}" if origami_count > 0 else "analytical",
             }
             shape_data["correlation"] = corr
 
-            aggregate["spearmans"].append(rho)
-            aggregate["pearsons"].append(pr)
+            aggregate["spearmans_latency"].append(rho_lat)
+            aggregate["pearsons_latency"].append(pr_lat)
+            aggregate["spearmans_tflops"].append(rho_tflops)
             aggregate["regrets"].append(regret)
             aggregate["shapes_evaluated"] += 1
             if top1:
@@ -868,10 +902,10 @@ def main():
             if top3_hit:
                 aggregate["top3_hits"] += 1
 
-            print(f"  >>> Spearman ρ={rho:+.3f}  Pearson r={pr:+.3f}  "
+            print(f"  >>> Spearman ρ(lat)={rho_lat:+.3f}  ρ(tflops)={rho_tflops:+.3f}  "
                   f"Oracle={oracle_tile} ({oracle_tflops:.2f}T)  "
                   f"Pick={pred_best} (regret={regret:.1f}%)  "
-                  f"top1={'✓' if top1 else '✗'}")
+                  f"top1={'Y' if top1 else 'N'}")
         else:
             print(f"  >>> Insufficient data ({len(measured_tiles)} valid tiles)")
 
@@ -892,12 +926,13 @@ def main():
     n = aggregate["shapes_evaluated"]
     agg = {"n_shapes": n}
     if n > 0:
-        agg["avg_spearman"] = sum(aggregate["spearmans"]) / n
-        agg["avg_pearson"] = sum(aggregate["pearsons"]) / n
+        agg["avg_spearman_latency"] = sum(aggregate["spearmans_latency"]) / n
+        agg["avg_pearson_latency"] = sum(aggregate["pearsons_latency"]) / n
+        agg["avg_spearman_tflops"] = sum(aggregate["spearmans_tflops"]) / n
         agg["avg_regret_pct"] = sum(aggregate["regrets"]) / n
         agg["max_regret_pct"] = max(aggregate["regrets"])
-        agg["min_spearman"] = min(aggregate["spearmans"])
-        agg["max_spearman"] = max(aggregate["spearmans"])
+        agg["min_spearman_latency"] = min(aggregate["spearmans_latency"])
+        agg["max_spearman_latency"] = max(aggregate["spearmans_latency"])
         agg["top1_accuracy_pct"] = aggregate["top1_hits"] / n * 100
         agg["top3_accuracy_pct"] = aggregate["top3_hits"] / n * 100
 
@@ -912,25 +947,37 @@ def main():
     csv_path = os.path.join(args.output_dir, "k024_measured_latency.csv")
     with open(csv_path, "w") as f:
         f.write("shape,batch,heads,seq_q,seq_kv,head_dim,causal,block_m,block_n,"
-                "measured_ms,measured_tflops,analytical_latency_us,analytical_tflops,"
-                "origami_latency_us,spearman_rho,gpu,node\n")
+                "measured_ms,measured_latency_us,measured_tflops,"
+                "analytical_latency_us,analytical_tflops,"
+                "origami_latency_us,origami_source,"
+                "spearman_rho_latency,spearman_rho_tflops,gpu,node\n")
         import socket
         hostname = socket.gethostname()
         for sd in results["per_shape"]:
-            rho_val = sd.get("correlation", {}).get("spearman_rho", "")
+            rho_lat = sd.get("correlation", {}).get("spearman_rho_latency", "")
+            rho_tflops = sd.get("correlation", {}).get("spearman_rho_tflops", "")
             for tile_key, td in sd.get("tile_results", {}).items():
                 if td.get("measured_tflops") is None:
                     continue
+                measured_lat_us = td['measured_ms'] * 1000.0 if td['measured_ms'] else ""
                 origami_lat = ""
+                origami_src = ""
                 if td.get("origami"):
-                    origami_lat = td["origami"].get("total_latency_us",
-                                  td["origami"].get("latency_us", ""))
+                    o = td["origami"]
+                    if o.get('source') != 'origami_error':
+                        origami_lat = o.get("decode_fix_latency_us",
+                                      o.get("latency_us", ""))
+                        origami_src = o.get("source", "")
+                    else:
+                        origami_src = f"error:{o.get('error', '')[:50]}"
                 f.write(f"{sd['name']},{sd['batch']},{sd['heads']},"
                         f"{sd['seq_q']},{sd['seq_kv']},{sd['head_dim']},"
                         f"{sd['causal']},{td['block_m']},{td['block_n']},"
-                        f"{td['measured_ms']},{td['measured_tflops']:.4f},"
+                        f"{td['measured_ms']},{measured_lat_us},"
+                        f"{td['measured_tflops']:.4f},"
                         f"{td['analytical_latency_us']:.4f},{td['analytical_tflops']:.4f},"
-                        f"{origami_lat},{rho_val},{dev},{hostname}\n")
+                        f"{origami_lat},{origami_src},"
+                        f"{rho_lat},{rho_tflops},{dev},{hostname}\n")
     print(f"CSV: {csv_path}")
 
     # ── Generate plots ───────────────────────────────────────────────────
