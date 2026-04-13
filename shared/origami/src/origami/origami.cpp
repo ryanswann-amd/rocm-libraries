@@ -553,7 +553,12 @@ std::vector<prediction_result_t> rank_configs(const problem_t& problem,
   latencies_configs.reserve(configs.size());
 
   for (auto& config : configs) {
-    if (!check_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype))
+    // Use Triton-aware LDS check (accounts for pipeline stages) when targeting Triton.
+    // For all other targets, use the raw tile-size LDS check.
+    bool lds_ok = (config.target == target_t::triton)
+        ? check_triton_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype)
+        : check_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype);
+    if (!lds_ok)
       continue;
 
     // Decode-shape guard: when M <= 1, oversized N-blocks waste memory
