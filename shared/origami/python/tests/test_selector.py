@@ -438,9 +438,20 @@ def test_selector_hardware_info(rocm_device):
 
 @pytest.mark.integration
 def test_selector_config_generation(rocm_device):
-    """Test that configs are properly generated from config_gen."""
-    config_gen = create_mock_config_gen()
-    
+    """Test that configs are properly generated from config_gen.
+
+    Uses tiles that belong to the 'large' shortlist (M > 1024) so all
+    configs survive the dimension-aware prefilter.  This validates the
+    config-generation path without coupling to filter behaviour, which
+    is covered by test_selector_tile_prefilter_* below.
+    """
+    # All three tiles are in the 'large' shortlist
+    config_gen = [
+        MockConfig(128, 128, 128, 1),
+        MockConfig(64, 64, 64, 2),
+        MockConfig(64, 64, 128, 1),
+    ]
+
     selector = OrigamiMatmulSelector(
         config_gen=config_gen,
         m=2048,
@@ -451,9 +462,60 @@ def test_selector_config_generation(rocm_device):
         out_dtype=torch.float16,
         device=rocm_device
     )
-    
-    # Should have generated configs from the input generator
-    assert len(selector._configs) == len(list(config_gen))
+
+    # All configs should survive since they are in the 'large' shortlist
+    assert len(selector._configs) == 3
+    assert all(isinstance(cfg, origami.config_t) for cfg in selector._configs)
+
+
+@pytest.mark.integration
+def test_selector_tile_prefilter_reduces_configs(rocm_device):
+    """Test that dimension-aware prefiltering removes out-of-shortlist tiles."""
+    # (256,128,64) is NOT in the 'large' shortlist
+    config_gen = [
+        MockConfig(128, 128, 128, 1),   # in 'large'
+        MockConfig(64, 64, 64, 2),      # in 'large'
+        MockConfig(256, 128, 64, 1),    # NOT in 'large'
+    ]
+
+    selector = OrigamiMatmulSelector(
+        config_gen=config_gen,
+        m=2048,
+        n=2048,
+        k=2048,
+        a_dtype=torch.float16,
+        b_dtype=torch.float16,
+        out_dtype=torch.float16,
+        device=rocm_device
+    )
+
+    # Only 2 configs should survive the prefilter
+    assert len(selector._configs) == 2
+    assert all(isinstance(cfg, origami.config_t) for cfg in selector._configs)
+
+
+@pytest.mark.integration
+def test_selector_tile_prefilter_fallback(rocm_device):
+    """Test that prefilter falls back to full set if no tiles match shortlist."""
+    # None of these tiles are in any shortlist
+    config_gen = [
+        MockConfig(256, 256, 256, 1),
+        MockConfig(512, 512, 32, 2),
+    ]
+
+    selector = OrigamiMatmulSelector(
+        config_gen=config_gen,
+        m=2048,
+        n=2048,
+        k=2048,
+        a_dtype=torch.float16,
+        b_dtype=torch.float16,
+        out_dtype=torch.float16,
+        device=rocm_device
+    )
+
+    # All configs should survive since none matched and fallback kicks in
+    assert len(selector._configs) == 2
     assert all(isinstance(cfg, origami.config_t) for cfg in selector._configs)
 
 
