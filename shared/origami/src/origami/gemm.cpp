@@ -103,14 +103,22 @@ std::tuple<size_t, size_t, size_t, size_t> compute_cu_occupancy(const problem_t&
   size_t num_mts = streamk::compute_number_of_output_tiles(
       config.mt.m, config.mt.n, problem.size.m, problem.size.n, problem.batch);
 
+  // K-018 fix: use effective CU count for occupancy calculations when max_cus
+  // constrains below the full chip. Without this fix, CU-partitioned runs
+  // under-predict timesteps by using hardware.N_CU (always 304 on MI300X)
+  // instead of the actual CU budget, causing ~25% latency under-prediction
+  // at CU=240 (ceil(896/304)=3 vs correct ceil(896/240)=4).
+  const size_t effective_cus = (max_cus > 0 && max_cus < hardware.N_CU)
+                                   ? max_cus : hardware.N_CU;
+
   size_t num_wgs, num_active_cus, num_timesteps, split_factor;
 
   if (split)  // if it is given
   {
     split          = split > 1 ? split : 1;
     num_wgs        = num_mts * split;
-    num_active_cus = num_wgs < hardware.N_CU ? num_wgs : hardware.N_CU;
-    num_timesteps  = math::safe_ceil_div(num_wgs, hardware.N_CU);
+    num_active_cus = num_wgs < effective_cus ? num_wgs : effective_cus;
+    num_timesteps  = math::safe_ceil_div(num_wgs, effective_cus);
     split_factor   = split;
 
   } else  // as what StreamK predicts
@@ -123,15 +131,15 @@ std::tuple<size_t, size_t, size_t, size_t> compute_cu_occupancy(const problem_t&
         problem, hardware, config_with_reduction, grid_selection, max_cus);
 
     // output variables
-    num_active_cus = num_wgs < hardware.N_CU ? num_wgs : hardware.N_CU;
+    num_active_cus = num_wgs < effective_cus ? num_wgs : effective_cus;
     // There are cases in which StreamK combines multiple output MTs and assigns to 1 WG.
     // That means, we artifically observe one full timesteps, but that is not what actually happens
     // under the hood. From a theoretical point of view, these distributions change all of the
     // computations in Origami. With current implementation, it is hard to capture that
     // behaviour analytically. So for now, if the num_wgs is less than the num_mts, we calculate
     // num_timesteps based on the num_mts. Otherwise, we use num_wgs to compute num_timesteps.
-    num_timesteps = num_wgs > num_mts ? math::safe_ceil_div(num_wgs, hardware.N_CU)
-                                      : math::safe_ceil_div(num_mts, hardware.N_CU);
+    num_timesteps = num_wgs > num_mts ? math::safe_ceil_div(num_wgs, effective_cus)
+                                      : math::safe_ceil_div(num_mts, effective_cus);
     split_factor  = math::safe_ceil_div(num_wgs, num_mts);
   }
 
@@ -985,8 +993,11 @@ double compute_total_latency(const problem_t& problem,
     OLOG_DEBUG("Element size B (bits): " << int(b_bits));
   }
   // 1-1) To compute the latency, use default WGM. And WGM can't be greater than one
+  // K-018 fix: use effective CU count for WGM when max_cus constrains below full chip
+  const size_t effective_cus_wgm = (max_cus > 0 && max_cus < hardware.N_CU)
+                                       ? max_cus : hardware.N_CU;
   int defaultWGM =
-      batch > 1 ? 1 : static_cast<int>(ceil(std::sqrt(hardware.N_CU / hardware.NUM_XCD)));
+      batch > 1 ? 1 : static_cast<int>(ceil(std::sqrt(effective_cus_wgm / hardware.NUM_XCD)));
   auto config_with_default_wgm              = config;
   config_with_default_wgm.workgroup_mapping = std::max(defaultWGM, 1);
 
