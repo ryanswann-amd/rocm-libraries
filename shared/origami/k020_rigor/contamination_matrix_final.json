@@ -1,0 +1,147 @@
+{
+  "_metadata": {
+    "task": "K-020",
+    "step": "st-3 contamination audit",
+    "date": "2026-04-12",
+    "methodology": "Regex scan of all deliverable reports for provenance tags. [ESTIMATED] tags distinguished into meta-references (audit documentation) vs actual data claims."
+  },
+  "deliverable_matrix": {
+    "report-alignment.md": {
+      "tags": {
+        "ESTIMATED": 6,
+        "VERIFIED": 22,
+        "HISTORICAL-SUPERSEDED": 0,
+        "HYPOTHESIS": 0,
+        "UNVERIFIED": 0,
+        "CONTAMINATED": 0
+      },
+      "meta_estimated_refs": 2,
+      "actual_estimated_claims": 0,
+      "gate_verdict": "PASS"
+    },
+    "report-benchmarking.md": {
+      "tags": {
+        "ESTIMATED": 21,
+        "VERIFIED": 10,
+        "HISTORICAL-SUPERSEDED": 2,
+        "HYPOTHESIS": 0,
+        "UNVERIFIED": 6,
+        "CONTAMINATED": 0
+      },
+      "meta_estimated_refs": 12,
+      "actual_estimated_claims": 1,
+      "gate_verdict": "FAIL"
+    },
+    "report-research.md": {
+      "tags": {
+        "ESTIMATED": 0,
+        "VERIFIED": 11,
+        "HISTORICAL-SUPERSEDED": 0,
+        "HYPOTHESIS": 0,
+        "UNVERIFIED": 0,
+        "CONTAMINATED": 0
+      },
+      "meta_estimated_refs": 0,
+      "actual_estimated_claims": 0,
+      "gate_verdict": "PASS"
+    },
+    "report-rigor.md": {
+      "tags": {
+        "ESTIMATED": 0,
+        "VERIFIED": 14,
+        "HISTORICAL-SUPERSEDED": 0,
+        "HYPOTHESIS": 0,
+        "UNVERIFIED": 0,
+        "CONTAMINATED": 0
+      },
+      "meta_estimated_refs": 0,
+      "actual_estimated_claims": 0,
+      "gate_verdict": "PASS"
+    },
+    "report-profiling.md": {
+      "tags": {
+        "ESTIMATED": 0,
+        "VERIFIED": 7,
+        "HISTORICAL-SUPERSEDED": 0,
+        "HYPOTHESIS": 0,
+        "UNVERIFIED": 0,
+        "CONTAMINATED": 0
+      },
+      "meta_estimated_refs": 0,
+      "actual_estimated_claims": 0,
+      "gate_verdict": "PASS"
+    },
+    "report-validation.md": {
+      "tags": {
+        "ESTIMATED": 0,
+        "VERIFIED": 3,
+        "HISTORICAL-SUPERSEDED": 4,
+        "HYPOTHESIS": 0,
+        "UNVERIFIED": 0,
+        "CONTAMINATED": 0
+      },
+      "meta_estimated_refs": 0,
+      "actual_estimated_claims": 0,
+      "gate_verdict": "PASS"
+    },
+    "report-internal-auditor.md": {
+      "tags": {
+        "ESTIMATED": 0,
+        "VERIFIED": 11,
+        "HISTORICAL-SUPERSEDED": 0,
+        "HYPOTHESIS": 0,
+        "UNVERIFIED": 0,
+        "CONTAMINATED": 0
+      },
+      "meta_estimated_refs": 0,
+      "actual_estimated_claims": 0,
+      "gate_verdict": "PASS"
+    },
+    "report-kernel-opt.md": {
+      "tags": {
+        "ESTIMATED": 0,
+        "VERIFIED": 1,
+        "HISTORICAL-SUPERSEDED": 0,
+        "HYPOTHESIS": 0,
+        "UNVERIFIED": 0,
+        "CONTAMINATED": 0
+      },
+      "meta_estimated_refs": 0,
+      "actual_estimated_claims": 0,
+      "gate_verdict": "PASS"
+    },
+    "k020_classification_table.md": {
+      "tags": {
+        "ESTIMATED": 0,
+        "VERIFIED": 39,
+        "HISTORICAL-SUPERSEDED": 0,
+        "HYPOTHESIS": 0,
+        "UNVERIFIED": 0,
+        "CONTAMINATED": 0
+      },
+      "meta_estimated_refs": 0,
+      "actual_estimated_claims": 0,
+      "gate_verdict": "PASS"
+    },
+    "k020_final_report.md": {
+      "tags": {
+        "ESTIMATED": 0,
+        "VERIFIED": 11,
+        "HISTORICAL-SUPERSEDED": 0,
+        "HYPOTHESIS": 11,
+        "UNVERIFIED": 2,
+        "CONTAMINATED": 0
+      },
+      "meta_estimated_refs": 0,
+      "actual_estimated_claims": 0,
+      "gate_verdict": "PASS"
+    }
+  },
+  "summary": {
+    "total_deliverables_scanned": 10,
+    "total_actual_estimated_claims": 1,
+    "total_verified_tags": 129,
+    "total_meta_estimated_refs": 14,
+    "overall_gate_verdict": "FAIL"
+  }
+}

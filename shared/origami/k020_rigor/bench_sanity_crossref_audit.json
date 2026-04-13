@@ -1,0 +1,112 @@
+{
+  "audit_date": "2026-04-12",
+  "auditor": "rigor",
+  "tool": "bench-sanity.py validate",
+  "threshold": 0.20,
+  "total_checks": 8,
+  "pass": 1,
+  "fail": 7,
+  "checks": [
+    {
+      "label": "MLP speedup 256/48: K-019 vs Cycle 8",
+      "source_a": "K-019 st-3 (rad-mi300x-1, ROCm 6.4)",
+      "source_b": "Job 18180 (useocpm2m-097-120, ROCm 7.0)",
+      "value_a": 1.084,
+      "value_b": 1.369,
+      "diff_pct": 20.8,
+      "result": "FAIL",
+      "root_cause": "Different benchmark: K-019 uses torch.copy_ comm, Cycle 8 uses Iris XGMI. Different ROCm version (6.4 vs 7.0). Different node. 1.369x is a valid measurement on DIFFERENT software stack.",
+      "impact_on_verdict": "MLP GO verdict survives - both sources agree coexec is beneficial (1.084x and 1.369x both >1.0)"
+    },
+    {
+      "label": "Lg16K speedup 256/48: K-019 vs Cycle 8",
+      "source_a": "K-019 st-3 (rad-mi300x-1, ROCm 6.4)",
+      "source_b": "Jobs 18180/18267 (OCI, ROCm 7.0)",
+      "value_a": 0.955,
+      "value_b": 0.620,
+      "diff_pct": 35.1,
+      "result": "FAIL",
+      "root_cause": "Severely inconsistent. K-019 shows 4.5% harm, Cycle 8 shows 38% harm. 61% difference cannot be explained by ROCm version alone. Possible causes: (1) different WS kernel version, (2) different comm mechanism (torch.copy_ vs Iris), (3) different concurrent launch methodology.",
+      "impact_on_verdict": "Lg16K NO-GO verdict is unanimous (both <1.0), but magnitude uncertainty is extreme"
+    },
+    {
+      "label": "MLP CU scaling alpha: Method A vs Benchmarking 8-pt",
+      "source_a": "Method A (ctr-cx71-mi300x-02, ROCm 7.2)",
+      "source_b": "Benchmarking 8-pt Alola (ctr-cx71-mi300x-02, ROCm 7.2)",
+      "value_a": 0.400,
+      "value_b": 0.854,
+      "diff_pct": 53.2,
+      "result": "FAIL",
+      "root_cause": "Different kernels: Method A = Triton persistent WS grid, 8-pt Alola = rocBLAS. Comparing apples and oranges. Reports that cite a single alpha for MLP are misleading.",
+      "impact_on_verdict": "MLP GO robust at both extremes (alpha_BE>>0.248 at alpha=0.40 and alpha=0.85)"
+    },
+    {
+      "label": "Sq8K CU scaling alpha: Method A vs Benchmarking",
+      "source_a": 0.598,
+      "source_b": 0.849,
+      "diff_pct": 29.6,
+      "result": "FAIL",
+      "root_cause": "Same kernel/ROCm mismatch as MLP",
+      "impact_on_verdict": "Sq8K GO robust at both extremes"
+    },
+    {
+      "label": "Lg16K CU scaling alpha: Method A vs Benchmarking",
+      "source_a": 0.603,
+      "source_b": 0.847,
+      "diff_pct": 28.8,
+      "result": "FAIL",
+      "root_cause": "Same kernel/ROCm mismatch",
+      "impact_on_verdict": "Lg16K NO-GO regardless of alpha"
+    },
+    {
+      "label": "Attn speedup 256/48: K-019 vs Job 18254",
+      "source_a": 0.710,
+      "source_b": 0.786,
+      "diff_pct": 9.7,
+      "result": "PASS",
+      "root_cause": "N/A - within tolerance. Both show significant harm.",
+      "impact_on_verdict": "Attn NO-GO robust"
+    },
+    {
+      "label": "Interference alpha MLP 296/8: c4 vs c8",
+      "source_a": 0.0149,
+      "source_b": 0.02158,
+      "diff_pct": 31.0,
+      "result": "FAIL",
+      "root_cause": "Different measurement campaigns. Both are small (<3%) so the 31% relative diff is just 0.7 percentage points absolute. Irrelevant to GO/NO-GO.",
+      "impact_on_verdict": "None - both values are trivially small"
+    },
+    {
+      "label": "Interference alpha MLP 256/48 vs 296/8 (c8 data)",
+      "source_a": 0.00519,
+      "source_b": 0.0149,
+      "diff_pct": 65.2,
+      "result": "FAIL",
+      "root_cause": "Different CU splits measuring different interference regimes. Expected to differ.",
+      "impact_on_verdict": "None - both values are trivially small"
+    }
+  ],
+  "factual_errors_found": [
+    {
+      "file": "k020_classification_table.md",
+      "error": "Sq8K row says 'Optimal CU Split = 296/8' with speedup 1.011x, but K-019 data shows 296/8=0.994x and 256/48=1.011x. The 1.011x number belongs to 256/48.",
+      "severity": "MODERATE - wrong split attribution, though GO verdict likely survives"
+    }
+  ],
+  "provenance_gaps": [
+    {
+      "parameter": "beta_base=0.15",
+      "claimed_source": "K-019",
+      "actual_source": "NOT FOUND in K-019 files",
+      "status": "UNRESOLVED",
+      "impact": "Classification-irrelevant (only affects model predictions, not measured speedups)"
+    },
+    {
+      "parameter": "comm_cu_exponent=0.7",
+      "claimed_source": "K-019",
+      "actual_source": "NOT FOUND in K-019 files",
+      "status": "UNRESOLVED",
+      "impact": "Classification-irrelevant"
+    }
+  ]
+}

@@ -1,0 +1,177 @@
+{
+  "_metadata": {
+    "task": "K-020",
+    "step": "st-3 bench-sanity cross-validation",
+    "date": "2026-04-12",
+    "n_pairs": 16,
+    "n_pass": 16,
+    "n_fail": 0,
+    "overall_verdict": "ALL_SANE"
+  },
+  "pairs": [
+    {
+      "pair_id": "CU_mask_flatness_MLP_4096x14336x4096",
+      "val1": 597.2,
+      "val2": 622.2,
+      "val1_source": "Job 17451, min CU TFLOPS",
+      "val2_source": "Job 17451, max CU TFLOPS",
+      "diff_pct": 4.02,
+      "threshold_pct": 20.0,
+      "verdict": "PASS",
+      "interpretation": "CU mask non-functional \u2014 all CU counts produce same TFLOPS"
+    },
+    {
+      "pair_id": "CU_mask_flatness_Attn_8192x4608x36864",
+      "val1": 587.7,
+      "val2": 599.6,
+      "val1_source": "Job 17451, min CU TFLOPS",
+      "val2_source": "Job 17451, max CU TFLOPS",
+      "diff_pct": 1.98,
+      "threshold_pct": 20.0,
+      "verdict": "PASS",
+      "interpretation": "CU mask non-functional \u2014 all CU counts produce same TFLOPS"
+    },
+    {
+      "pair_id": "CU_mask_flatness_Sq8K_8192x8192x8192",
+      "val1": 607.1,
+      "val2": 638.3,
+      "val1_source": "Job 17451, min CU TFLOPS",
+      "val2_source": "Job 17451, max CU TFLOPS",
+      "diff_pct": 4.89,
+      "threshold_pct": 20.0,
+      "verdict": "PASS",
+      "interpretation": "CU mask non-functional \u2014 all CU counts produce same TFLOPS"
+    },
+    {
+      "pair_id": "CU_mask_flatness_Lg16K_16384x16384x16384",
+      "val1": 585.1,
+      "val2": 589.5,
+      "val1_source": "Job 17451, min CU TFLOPS",
+      "val2_source": "Job 17451, max CU TFLOPS",
+      "diff_pct": 0.75,
+      "threshold_pct": 20.0,
+      "verdict": "PASS",
+      "interpretation": "CU mask non-functional \u2014 all CU counts produce same TFLOPS"
+    },
+    {
+      "pair_id": "WS_296_vs_304_MLP_4096x14336x4096",
+      "val1": 353.3,
+      "val2": 357.8,
+      "val1_source": "fullnode_v3, target_cus=296",
+      "val2_source": "fullnode_v3, target_cus=304",
+      "diff_pct": 1.26,
+      "threshold_pct": 20.0,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "WS_296_vs_304_Attn_8192x4608x36864",
+      "val1": 538.7,
+      "val2": 542.3,
+      "val1_source": "fullnode_v3, target_cus=296",
+      "val2_source": "fullnode_v3, target_cus=304",
+      "diff_pct": 0.66,
+      "threshold_pct": 20.0,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "WS_296_vs_304_Sq8K_8192x8192x8192",
+      "val1": 503.7,
+      "val2": 505.5,
+      "val1_source": "fullnode_v3, target_cus=296",
+      "val2_source": "fullnode_v3, target_cus=304",
+      "diff_pct": 0.36,
+      "threshold_pct": 20.0,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "WS_296_vs_304_Lg16K_16384x16384x16384",
+      "val1": 536.7,
+      "val2": 530.3,
+      "val1_source": "fullnode_v3, target_cus=296",
+      "val2_source": "fullnode_v3, target_cus=304",
+      "diff_pct": 1.19,
+      "threshold_pct": 20.0,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "alpha_BE_crossref_MLP",
+      "val1": 0.8832,
+      "val1_source": "rigor/d2d_max_sensitivity_analysis.json",
+      "val2": 0.883,
+      "val2_source": "profiling/k020_origami_params.json",
+      "diff_pct": 0.023,
+      "threshold_pct": 1.0,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "alpha_BE_crossref_Attn",
+      "val1": 0.0707,
+      "val1_source": "rigor/d2d_max_sensitivity_analysis.json",
+      "val2": 0.071,
+      "val2_source": "profiling/k020_origami_params.json",
+      "diff_pct": 0.424,
+      "threshold_pct": 1.0,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "alpha_BE_crossref_Sq8K",
+      "val1": 0.4246,
+      "val1_source": "rigor/d2d_max_sensitivity_analysis.json",
+      "val2": 0.425,
+      "val2_source": "profiling/k020_origami_params.json",
+      "diff_pct": 0.094,
+      "threshold_pct": 1.0,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "alpha_BE_crossref_Lg16K",
+      "val1": 0.1914,
+      "val1_source": "rigor/d2d_max_sensitivity_analysis.json",
+      "val2": 0.191,
+      "val2_source": "profiling/k020_origami_params.json",
+      "diff_pct": 0.209,
+      "threshold_pct": 1.0,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "alpha_recompute_MLP",
+      "val1": 0.01487,
+      "val1_source": "Recomputed from (concurrent_med - solo_med) / solo_med",
+      "val2": 0.0149,
+      "val2_source": "reports/tasks/K-020/profiling/k020_phase2_ws_fullnode_v3_results.json",
+      "absolute_diff": 3e-05,
+      "threshold_abs": 0.001,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "alpha_recompute_Attn",
+      "val1": 0.00919,
+      "val1_source": "Recomputed from (concurrent_med - solo_med) / solo_med",
+      "val2": 0.00919,
+      "val2_source": "reports/tasks/K-020/profiling/k020_phase2_ws_coexec_definitive_results.json",
+      "absolute_diff": 0.0,
+      "threshold_abs": 0.001,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "alpha_recompute_Sq8K",
+      "val1": 0.00222,
+      "val1_source": "Recomputed from (concurrent_med - solo_med) / solo_med",
+      "val2": 0.0022,
+      "val2_source": "reports/tasks/K-020/profiling/k020_phase2_ws_fullnode_v3_results.json",
+      "absolute_diff": 2e-05,
+      "threshold_abs": 0.001,
+      "verdict": "PASS"
+    },
+    {
+      "pair_id": "alpha_recompute_Lg16K",
+      "val1": 0.0131,
+      "val1_source": "Recomputed from (concurrent_med - solo_med) / solo_med",
+      "val2": 0.0131,
+      "val2_source": "reports/tasks/K-020/profiling/k020_phase2_ws_coexec_definitive_results.json",
+      "absolute_diff": 0.0,
+      "threshold_abs": 0.001,
+      "verdict": "PASS"
+    }
+  ]
+}

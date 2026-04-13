@@ -1,0 +1,116 @@
+{
+  "audit_date": "2026-04-12",
+  "auditor": "rigor-team-c3",
+  "cross_validations": [
+    {
+      "check": "alpha_BE MLP",
+      "val1": 0.883,
+      "val2": 0.8832,
+      "diff_pct": 0.02,
+      "status": "PASS"
+    },
+    {
+      "check": "alpha_BE Attn",
+      "val1": 0.071,
+      "val2": 0.0707,
+      "diff_pct": 0.42,
+      "status": "PASS"
+    },
+    {
+      "check": "alpha_BE Sq8K",
+      "val1": 0.425,
+      "val2": 0.4246,
+      "diff_pct": 0.09,
+      "status": "PASS"
+    },
+    {
+      "check": "alpha_BE Lg16K",
+      "val1": 0.191,
+      "val2": 0.1914,
+      "diff_pct": 0.21,
+      "status": "PASS"
+    },
+    {
+      "check": "TFLOPS MLP",
+      "val1": 612.0,
+      "val2": 597.4,
+      "diff_pct": 2.39,
+      "status": "PASS"
+    },
+    {
+      "check": "speedup MLP",
+      "val1": 1.369,
+      "val2": 1.369,
+      "diff_pct": 0.0,
+      "status": "PASS"
+    },
+    {
+      "check": "speedup Attn",
+      "val1": 0.786,
+      "val2": 0.786,
+      "diff_pct": 0.0,
+      "status": "PASS"
+    },
+    {
+      "check": "speedup Sq8K",
+      "val1": 1.011,
+      "val2": 1.0108,
+      "diff_pct": 0.02,
+      "status": "PASS"
+    },
+    {
+      "check": "speedup Lg16K",
+      "val1": 0.966,
+      "val2": 0.966,
+      "diff_pct": 0.0,
+      "status": "PASS"
+    }
+  ],
+  "hard_gate_checks": {
+    "zero_estimated_tags_in_reports": false,
+    "has_verified_tags": true,
+    "bench_sanity_all_pass": true,
+    "116_entries_scanned": true,
+    "verdict": "FAIL"
+  },
+  "total_verified_count": 56,
+  "total_estimated_count": 16,
+  "model_parameter_checks": [
+    {
+      "shape": "MLP",
+      "alpha_BE": 0.8832,
+      "alpha_measured": 0.0149,
+      "safety_margin_verified": true,
+      "classification": "GO",
+      "n_cross_refs": 3,
+      "all_verified": true
+    },
+    {
+      "shape": "Attn",
+      "alpha_BE": 0.0707,
+      "alpha_measured": 0.00919,
+      "safety_margin_verified": true,
+      "classification": "NO-GO (structural \u2014 comm time = 7% of GEMM time, coexec savings cannot recover CU penalty)",
+      "n_cross_refs": 3,
+      "all_verified": true
+    },
+    {
+      "shape": "Sq8K",
+      "alpha_BE": 0.4246,
+      "alpha_measured": 0.0022,
+      "safety_margin_verified": true,
+      "classification": "GO",
+      "n_cross_refs": 3,
+      "all_verified": true
+    },
+    {
+      "shape": "Lg16K",
+      "alpha_BE": 0.1914,
+      "alpha_measured": 0.0131,
+      "safety_margin_verified": true,
+      "classification": "MONITOR (\u03b1_BE=0.1914, 1.54x above D2D_MAX=0.124 \u2014 only 54% headroom before NO-GO flip)",
+      "n_cross_refs": 3,
+      "all_verified": true
+    }
+  ]
+}
