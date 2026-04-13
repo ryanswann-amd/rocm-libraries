@@ -264,51 +264,65 @@ def predict_attention_latency(batch, heads, seq_q, seq_kv, head_dim, causal,
                                block_m, block_n, hw=MI300X_HW):
     """Predict attention latency using GEMM decomposition + roofline model.
 
+    Key insight: in flash attention, the KV-loop tiles within each
+    (batch, head, m_tile) are SERIAL — only (batch × heads × tiles_m) work
+    items are truly parallel across CUs, and each executes tiles_n KV
+    iterations sequentially.
+
     Returns dict with predicted latency (us), tflops, and breakdown.
     """
     n_cu = hw['n_cu']
     peak_tflops = hw['peak_tflops']
     hbm_bw = hw['hbm_bw_tbps']
 
-    # Per-tile FLOP and byte counts
+    # Per-KV-tile FLOP and byte counts
     qk_flops = 2 * block_m * block_n * head_dim
     pv_flops = 2 * block_m * head_dim * block_n
     softmax_flops = 5 * block_m * block_n  # exp + max + sub + sum + div
 
-    # Memory per tile
+    # Memory per KV-tile
     qk_bytes = (block_m * head_dim + block_n * head_dim + block_m * block_n) * 2
     pv_bytes = (block_m * block_n + block_n * head_dim + block_m * head_dim) * 2
     softmax_bytes = block_m * block_n * 4 * 2  # fp32 intermediates
 
-    # Roofline time (ns)
+    # Roofline time per KV-tile (ns) — on a single CU
     qk_ns = max(qk_flops / (peak_tflops * 1e3), qk_bytes / (hbm_bw * 1e3))
     pv_ns = max(pv_flops / (peak_tflops * 1e3), pv_bytes / (hbm_bw * 1e3))
     softmax_ns = softmax_bytes / (hbm_bw * 1e3)
 
-    tile_ns = qk_ns + pv_ns + softmax_ns
+    kv_tile_ns = qk_ns + pv_ns + softmax_ns
 
-    # Tiles
+    # Tile dimensions
     tiles_m = math.ceil(seq_q / block_m)
+    tiles_n = math.ceil(seq_kv / block_n)
+
+    # For causal attention, each m-tile i processes only KV tiles 0..i
+    # Average KV tiles per m-tile = (tiles_m + 1) / 2 for causal
     if causal and seq_q == seq_kv:
-        tiles_n_eff = math.ceil(seq_kv / block_n) / 2
+        avg_kv_tiles = (tiles_m + 1) / 2.0
     else:
-        tiles_n_eff = math.ceil(seq_kv / block_n)
+        avg_kv_tiles = tiles_n
 
-    total_tiles = batch * heads * tiles_m * tiles_n_eff
+    # Parallel work items = batch × heads × tiles_m
+    # (each work item runs avg_kv_tiles KV iterations sequentially)
+    parallel_items = batch * heads * tiles_m
 
-    # CU occupancy
-    waves = math.ceil(total_tiles / n_cu)
-    last_wave_util = (total_tiles % n_cu) / n_cu if total_tiles % n_cu != 0 else 1.0
+    # CU wave scheduling
+    waves = math.ceil(parallel_items / n_cu)
+    last_wave_util = (parallel_items % n_cu) / n_cu if parallel_items % n_cu != 0 else 1.0
 
-    total_ns = waves * tile_ns
+    # Total time = waves × (serial KV iterations per work item) × per-tile time
+    total_ns = waves * avg_kv_tiles * kv_tile_ns
     latency_us = total_ns / 1e3
     latency_ms = latency_us / 1e3
 
-    # Total FLOPS
-    total_flops = batch * heads * tiles_m * tiles_n_eff * (qk_flops + pv_flops + softmax_flops)
+    # Standard attention FLOP count for TFLOPS calculation
+    total_flops = 4.0 * batch * heads * seq_q * seq_kv * head_dim
+    if causal:
+        total_flops *= 0.5
     predicted_tflops = total_flops / (latency_ms * 1e-3) / 1e12 if latency_ms > 0 else 0
 
-    gemm_frac = (qk_ns + pv_ns) / tile_ns if tile_ns > 0 else 0
+    gemm_frac = (qk_ns + pv_ns) / kv_tile_ns if kv_tile_ns > 0 else 0
 
     return {
         'latency_us': latency_us,
@@ -316,8 +330,9 @@ def predict_attention_latency(batch, heads, seq_q, seq_kv, head_dim, causal,
         'gemm_fraction': gemm_frac,
         'cu_waves': waves,
         'cu_last_wave_util': last_wave_util,
-        'total_tiles': total_tiles,
-        'tile_ns': tile_ns,
+        'parallel_items': parallel_items,
+        'avg_kv_tiles': avg_kv_tiles,
+        'kv_tile_ns': kv_tile_ns,
     }
 
 
