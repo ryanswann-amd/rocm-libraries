@@ -81,6 +81,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests that require hardware",
     "regression: marks tests as ranking regression tests",
+    "hipblaslt_guardrail: CI guardrail ensuring hipblaslt path is bit-identical after triton changes",
 ]
 addopts = [
     "-ra",
