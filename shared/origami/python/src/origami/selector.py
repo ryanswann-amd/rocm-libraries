@@ -375,10 +375,9 @@ class OrigamiMatmulSelector:
 
 
     # High-performance tile shortlists per GEMM shape category.
-    # Derived from greedy set-cover analysis over 2287 MI300X GPU-measured shapes
-    # (80K+ kernel timing rows). Each category's tiles are chosen to minimize
-    # worst-case regret: the full set achieves mean=0.18%, max=9.78% regret
-    # when origami picks the best tile within the category subset.
+    # Derived from greedy set-cover analysis over 2484 MI300X GPU-measured shapes
+    # (106K+ kernel timing rows). Each category's tiles are chosen to minimize
+    # worst-case regret. Per-category shortlists achieve >90% oracle tile coverage.
     # Tile format: (BLOCK_M, BLOCK_N, BLOCK_K)
     _TILE_SHORTLISTS = {
         # M <= 4: decode / single-token inference
