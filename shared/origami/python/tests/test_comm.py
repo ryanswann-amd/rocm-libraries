@@ -8,39 +8,36 @@ Validates predict_comm_latency() against GPU-measured Iris all-reduce data
 from Slurm jobs #17994 (ws=4) and #17995 (ws=8) on MI300X.
 """
 
+import importlib.util
 import os
 import sys
-import types
 import pytest
 
-# Ensure the local origami package (with comm.py) is found before
-# the system-installed one (which may lack comm and requires ROCm C++ bindings).
-_src_dir = os.path.join(os.path.dirname(__file__), "..", "src")
-sys.path.insert(0, os.path.abspath(_src_dir))
+# Load comm.py directly from this worktree to avoid conflicts with
+# system-installed origami (which may be an editable install pointing
+# to a different worktree and requires ROCm C++ bindings).
+_comm_path = os.path.join(os.path.dirname(__file__), "..", "src", "origami", "comm.py")
+_comm_path = os.path.abspath(_comm_path)
 
-# Remove any pre-loaded origami from the system site-packages
-for key in list(sys.modules):
-    if key == "origami" or key.startswith("origami."):
-        del sys.modules[key]
+_spec = importlib.util.spec_from_file_location("comm", _comm_path, submodule_search_locations=[])
+sys.modules["comm"] = None  # placeholder for dataclass __module__
+comm = importlib.util.module_from_spec(_spec)
+comm.__name__ = "comm"
+sys.modules["comm"] = comm
+_spec.loader.exec_module(comm)
 
-# Create a lightweight origami package that skips C++ bindings
-_pkg = types.ModuleType("origami")
-_pkg.__path__ = [os.path.join(os.path.abspath(_src_dir), "origami")]
-_pkg.__package__ = "origami"
-sys.modules["origami"] = _pkg
-
-from origami.comm import (
-    predict_comm_latency,
-    predict_comm_latency_ms,
-    validate,
-    list_hardware,
-    list_profiles,
-    get_profile,
-    predict_batch,
-    CommProfile,
-    select_partition,
-    compute_overlap_speedup,
-)
+# Re-export everything tests need
+predict_comm_latency = comm.predict_comm_latency
+predict_comm_latency_ms = comm.predict_comm_latency_ms
+predict_overlap_latency = comm.predict_overlap_latency
+validate = comm.validate
+list_hardware = comm.list_hardware
+list_profiles = comm.list_profiles
+get_profile = comm.get_profile
+predict_batch = comm.predict_batch
+CommProfile = comm.CommProfile
+estimate_allreduce_ms = comm.estimate_allreduce_ms
+predict_for_tensor = comm.predict_for_tensor
 
 
 class TestPredictCommLatency:
@@ -64,7 +61,7 @@ class TestPredictCommLatency:
         assert abs(lat_us / 1e3 - lat_ms) < 1e-10
 
     def test_cu_partitioning_increases_latency(self):
-        """Fewer CUs → higher latency (less BW)."""
+        """Fewer CUs -> higher latency (less BW)."""
         lat_full = predict_comm_latency("all_reduce", 64 * 1024**2, world_size=8)
         lat_part = predict_comm_latency(
             "all_reduce", 64 * 1024**2, world_size=8, comm_cus=32
@@ -104,10 +101,22 @@ class TestPredictCommLatency:
             predict_comm_latency("all_reduce", 1024, world_size=8, comm_cus=0)
 
     def test_latency_increases_with_message_size(self):
-        """Larger messages → higher latency."""
+        """Larger messages -> higher latency."""
         lat_small = predict_comm_latency("all_reduce", 1024, world_size=8)
         lat_large = predict_comm_latency("all_reduce", 256 * 1024**2, world_size=8)
         assert lat_large > lat_small
+
+    def test_power_law_scaling_intermediate(self):
+        """Power-law gamma=0.84 gives intermediate latency between full and linear."""
+        # At comm_cus=20 (half of min_comm_cus=40 for ws=8):
+        # linear would give bw_scale=0.5, power-law gives 0.5^0.84 = 0.558
+        lat_full = predict_comm_latency("all_reduce", 128 * 1024**2, world_size=8)
+        lat_half = predict_comm_latency(
+            "all_reduce", 128 * 1024**2, world_size=8, comm_cus=20
+        )
+        # Power-law should make it less than 2x (linear would give ~2x)
+        ratio = lat_half / lat_full
+        assert 1.0 < ratio < 2.0
 
 
 class TestValidation:
@@ -169,12 +178,20 @@ class TestProfiles:
         assert isinstance(p, CommProfile)
         assert p.startup_ms == 0.2822
         assert p.effective_bw_gbps == 212.31
-        assert p.min_comm_cus == 48
+        assert p.min_comm_cus == 40
+        assert p.bw_gamma == 0.84
 
     def test_profile_is_frozen(self):
         p = get_profile("mi300x", 8)
         with pytest.raises(AttributeError):
             p.startup_ms = 999.0
+
+    def test_profile_has_bw_gamma(self):
+        """All profiles should have the power-law scaling exponent."""
+        for key in list_profiles():
+            p = get_profile(*key)
+            assert hasattr(p, 'bw_gamma')
+            assert 0 < p.bw_gamma <= 1.0
 
 
 class TestBatchPrediction:
@@ -222,57 +239,71 @@ class TestVerifiedReferencePoints:
         )
 
 
-# ── CU Partition Selection Tests ──────────────────────────────────────
-
-class TestSelectPartition:
-    """Tests for select_partition() CU allocation."""
-
-    def test_returns_tuple(self):
-        result = select_partition(4096, 4096, 4096, world_size=8)
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-
-    def test_cus_sum_to_total(self):
-        gemm_cus, comm_cus = select_partition(4096, 4096, 4096)
-        assert gemm_cus + comm_cus == 304
-
-    def test_respects_xcd_boundaries(self):
-        """CU allocations should be multiples of 38 (304/8 XCDs)."""
-        gemm_cus, comm_cus = select_partition(4096, 4096, 4096)
-        assert comm_cus % 38 == 0
-        assert gemm_cus % 38 == 0
-
-    def test_prefers_gemm_heavy_split(self):
-        """GEMM should get >= 50% of CUs."""
-        gemm_cus, comm_cus = select_partition(4096, 4096, 4096)
-        assert gemm_cus >= comm_cus
-
-    def test_different_world_sizes(self):
-        """ws=4 should also produce valid partitions."""
-        gemm_cus, comm_cus = select_partition(4096, 4096, 4096, world_size=4)
-        assert gemm_cus + comm_cus == 304
-        assert comm_cus > 0
-
-
-class TestComputeOverlapSpeedup:
-    """Tests for compute_overlap_speedup() analysis."""
+class TestOverlapPrediction:
+    """Tests for predict_overlap_latency() coexecution API."""
 
     def test_returns_dict_with_expected_keys(self):
-        result = compute_overlap_speedup(4096, 4096, 4096, 256, 48)
-        expected_keys = {"t_sequential_ms", "t_overlap_ms", "speedup",
-                         "gemm_ms", "comm_ms"}
+        result = predict_overlap_latency(
+            gemm_latency_ms=0.5,
+            message_bytes=128 * 1024**2,
+            world_size=8,
+            comm_cus=48
+        )
+        expected_keys = {"gemm_ms", "comm_ms", "coexec_ms", "sequential_ms",
+                         "speedup", "bottleneck"}
         assert set(result.keys()) == expected_keys
 
     def test_speedup_greater_than_one(self):
         """Overlapped execution should be faster than sequential."""
-        result = compute_overlap_speedup(4096, 4096, 4096, 256, 48)
+        result = predict_overlap_latency(
+            gemm_latency_ms=0.5,
+            message_bytes=128 * 1024**2,
+            world_size=8,
+        )
         assert result["speedup"] > 1.0
 
     def test_overlap_time_less_than_sequential(self):
-        result = compute_overlap_speedup(4096, 4096, 4096, 256, 48)
-        assert result["t_overlap_ms"] < result["t_sequential_ms"]
+        result = predict_overlap_latency(
+            gemm_latency_ms=0.5,
+            message_bytes=128 * 1024**2,
+        )
+        assert result["coexec_ms"] < result["sequential_ms"]
 
     def test_overlap_is_max_of_gemm_and_comm(self):
-        result = compute_overlap_speedup(4096, 4096, 4096, 256, 48)
-        assert abs(result["t_overlap_ms"] -
+        result = predict_overlap_latency(
+            gemm_latency_ms=0.5,
+            message_bytes=128 * 1024**2,
+        )
+        assert abs(result["coexec_ms"] -
                    max(result["gemm_ms"], result["comm_ms"])) < 1e-6
+
+    def test_bottleneck_identification(self):
+        """Should identify which operation is the bottleneck."""
+        result = predict_overlap_latency(
+            gemm_latency_ms=0.5,
+            message_bytes=128 * 1024**2,
+        )
+        assert result["bottleneck"] in ("gemm", "comm")
+
+
+class TestConvenienceAPIs:
+    """Tests for tensor and simplified APIs."""
+
+    def test_estimate_allreduce_ms(self):
+        """Simple one-liner API works."""
+        lat = estimate_allreduce_ms(100_000_000)
+        assert isinstance(lat, float)
+        assert lat > 0
+
+    def test_predict_for_tensor_shape(self):
+        """Shape tuple API works without torch."""
+        lat = predict_for_tensor("all_reduce", (4096, 4096), dtype_bytes=2)
+        assert isinstance(lat, float)
+        assert lat > 0
+
+    def test_estimate_consistency(self):
+        """estimate_allreduce_ms should match predict_comm_latency_ms."""
+        numel = 50_000_000
+        lat1 = estimate_allreduce_ms(numel, dtype_bytes=2, world_size=8)
+        lat2 = predict_comm_latency_ms("all_reduce", numel * 2, world_size=8)
+        assert abs(lat1 - lat2) < 1e-10
