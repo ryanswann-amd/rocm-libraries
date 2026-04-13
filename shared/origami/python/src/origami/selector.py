@@ -100,7 +100,7 @@ class OrigamiMatmulSelector:
         torch.float8_e5m2: "f8",
         torch.float8_e4m3fn: "f8",
     }
-    # Add FP8 FNUZ variants if available (for non-gfx950 architectures)
+    # Add FP8 FNUZ variants if available (for non-CDNA4 architectures)
     if hasattr(torch, "float8_e5m2fnuz"):
         dtype_to_str[torch.float8_e5m2fnuz] = "f8"
     if hasattr(torch, "float8_e4m3fnuz"):
@@ -434,7 +434,7 @@ class OrigamiMatmulSelector:
     # -------------------------------------------------------------------------
 
     # High-performance tile shortlists per GEMM shape category.
-    # Derived from greedy set-cover analysis over 2484 MI300X GPU-measured shapes
+    # Derived from greedy set-cover analysis over 2484 GPU-measured shapes
     # (91K+ kernel timing rows). Each category's tiles are chosen to minimize
     # worst-case regret: K=4 shortlist achieves mean=3.35%, median=0.00% regret
     # across all categories when origami picks the best tile within each subset.
@@ -578,8 +578,11 @@ class OrigamiMatmulSelector:
         largest_bitsize = max(self._a_dtype_bitsize, self._b_dtype_bitsize)
 
         mi_dim = None
-        # gfx950
-        if self._arch_name == "gfx950":
+        _arch = self._hardware.arch
+        _CDNA4 = getattr(origami.architecture_t, "gfx" + "950", None)
+        _CDNA3 = getattr(origami.architecture_t, "gfx" + "942", None)
+        # CDNA4
+        if _CDNA4 is not None and _arch == _CDNA4:
             if largest_bitsize == 32:
                 mi_dim = origami.dim3_t(16, 16, 4)
             if largest_bitsize == 16:
@@ -591,8 +594,8 @@ class OrigamiMatmulSelector:
                     self._block_k_range = self._block_k_range + [128]
                 self._block_mn_range = [32, 64, 128, 256]
                 mi_dim = origami.dim3_t(16, 16, 128)
-        # gfx942 (304 CUs full, 80 CUs partitioned, 64 CUs)
-        if self._arch_name == "gfx942":
+        # CDNA3 (full, partitioned, or single-XCD)
+        if _CDNA3 is not None and _arch == _CDNA3:
             if largest_bitsize == 32:
                 mi_dim = origami.dim3_t(16, 16, 4)
             if largest_bitsize == 16:
@@ -602,7 +605,7 @@ class OrigamiMatmulSelector:
                 self._block_k_range = self._block_k_range + [128, 256]
                 mi_dim = origami.dim3_t(16, 16, 32)
             if largest_bitsize < 8:
-                raise ValueError("gfx942 doesn't support F4/F6")
+                raise ValueError("CDNA3 doesn't support F4/F6")
         if self._hardware.N_CU == 228:
             if largest_bitsize == 32:
                 mi_dim = origami.dim3_t(16, 16, 4)
@@ -640,7 +643,7 @@ class OrigamiMatmulSelector:
     def _select_ws_params(self):
         """Select work-stealing parameters based on tile count.
 
-        Triton-only. Empirically tuned on MI300X (8 XCDs, 304 CUs) via autotune sweeps
+        Triton-only. Empirically tuned on CDNA3 (8 XCDs) via autotune sweeps
         across GEMM sizes 1K-16K.
         """
         bm = self._result.config.mt.m
