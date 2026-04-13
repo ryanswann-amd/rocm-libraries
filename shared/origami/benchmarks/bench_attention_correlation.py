@@ -326,7 +326,11 @@ def predict_attention_latency(batch, heads, seq_q, seq_kv, head_dim, causal,
 # ============================================================================
 def get_origami_attention_predictions(batch, heads, seq_q, seq_kv, head_dim,
                                        block_m, block_n, kv_heads=None):
-    """Try to get origami's native attention model prediction.
+    """Get origami's native attention model prediction.
+
+    Uses att_compute_total_latency with problem_t (attention mode via q_heads).
+    For decode (seq_q=1), applies sequential KV-loop decomposition fix:
+    latency = n_kv_blocks * per_block_latency.
 
     Returns dict or None if origami not available.
     """
@@ -348,70 +352,69 @@ def get_origami_attention_predictions(batch, heads, seq_q, seq_kv, head_dim,
                 2100000  # compute_clock_khz (2.1 GHz)
             )
 
-        # Check if attention model exists
-        if hasattr(origami, 'attention_problem_t'):
-            prob = origami.attention_problem_t()
-            prob.q_seq_len = seq_q
-            prob.kv_seq_len = seq_kv
-            prob.head_dim = head_dim
-            prob.q_heads = heads
-            prob.kv_heads = kv_heads
-            prob.batch = batch
-
-            config = origami.attention_config_t()
-            config.block_m = block_m
-            config.block_n = block_n
-
-            latency = origami.att_compute_total_latency(prob, hw, config)
-            return {
-                'source': 'origami_attention',
-                'latency_us': latency * 1e6,
-            }
-
-        # Fall back to GEMM model: decompose attention into QK^T + PV GEMMs
-        dt = origami.string_to_datatype('bf16_r')
+        dt = origami.string_to_datatype('bf16')
         mi = hw.get_recommended_matrix_instruction(dt)
+        max_cus = hw.N_CU
 
-        # QK^T GEMM
-        prob_qk = origami.problem_t()
-        prob_qk.size = origami.dim3_t(block_m, block_n, head_dim)
-        prob_qk.batch = 1
-        prob_qk.a_transpose = origami.transpose_t.N
-        prob_qk.b_transpose = origami.transpose_t.T
-        prob_qk.a_dtype = dt
-        prob_qk.b_dtype = dt
-        prob_qk.c_dtype = dt
-        prob_qk.d_dtype = dt
-        cfg_qk = origami.config_t()
-        cfg_qk.mt = origami.dim3_t(block_m, block_n, head_dim)
-        cfg_qk.mi = mi
-        cfg_qk.occupancy = 2
+        # Use origami's native attention API: att_compute_total_latency
+        # Construct problem_t with q_heads set (attention mode)
+        # M=seq_q, N=seq_kv, K=head_dim (matches OrigamiAttentionSelector)
+        prob = origami.problem_t()
+        prob.size = origami.dim3_t(seq_q, seq_kv, head_dim)
+        prob.batch = batch
+        prob.q_heads = heads
+        prob.a_transpose = origami.transpose_t.N
+        prob.b_transpose = origami.transpose_t.N
+        prob.a_dtype = dt
+        prob.b_dtype = dt
+        prob.c_dtype = dt
+        prob.d_dtype = dt
+        prob.mi_dtype = dt
+        prob.a_mx_block_size = 0
+        prob.b_mx_block_size = 0
 
-        # PV GEMM
-        prob_pv = origami.problem_t()
-        prob_pv.size = origami.dim3_t(block_m, head_dim, block_n)
-        prob_pv.batch = 1
-        prob_pv.a_transpose = origami.transpose_t.N
-        prob_pv.b_transpose = origami.transpose_t.N
-        prob_pv.a_dtype = dt
-        prob_pv.b_dtype = dt
-        prob_pv.c_dtype = dt
-        prob_pv.d_dtype = dt
-        cfg_pv = origami.config_t()
-        cfg_pv.mt = origami.dim3_t(block_m, head_dim, block_n)
-        cfg_pv.mi = mi
-        cfg_pv.occupancy = 2
+        cfg = origami.config_t()
+        cfg.mt = origami.dim3_t(block_m, block_n, head_dim)
+        cfg.mi = mi
+        cfg.occupancy = 2
 
-        max_cus = 304  # MI300X
-        qk_lat = origami.compute_total_latency(prob_qk, hw, cfg_qk, max_cus)
-        pv_lat = origami.compute_total_latency(prob_pv, hw, cfg_pv, max_cus)
+        lat_ns = origami.att_compute_total_latency(prob, hw, cfg, max_cus)
+        lat_us = lat_ns / 1000.0  # nanoseconds to microseconds
 
-        return {
-            'source': 'origami_gemm_decomposition',
-            'qk_latency_us': qk_lat * 1e6,
-            'pv_latency_us': pv_lat * 1e6,
-            'total_latency_us': (qk_lat + pv_lat) * 1e6,
+        is_decode = (seq_q == 1)
+        result = {
+            'source': 'origami_att_native',
+            'latency_us': lat_us,
+            'latency_ns': lat_ns,
         }
+
+        # Decode fix: sequential KV-loop decomposition
+        # For decode (seq_q=1), model each KV block independently and sum
+        if is_decode:
+            import math
+            n_kv_blocks = math.ceil(seq_kv / block_n)
+            eff_seq_q = max(seq_q, block_m)
+
+            prob_blk = origami.problem_t()
+            prob_blk.size = origami.dim3_t(eff_seq_q, block_n, head_dim)
+            prob_blk.batch = batch
+            prob_blk.q_heads = heads
+            prob_blk.a_transpose = origami.transpose_t.N
+            prob_blk.b_transpose = origami.transpose_t.N
+            prob_blk.a_dtype = dt
+            prob_blk.b_dtype = dt
+            prob_blk.c_dtype = dt
+            prob_blk.d_dtype = dt
+            prob_blk.mi_dtype = dt
+            prob_blk.a_mx_block_size = 0
+            prob_blk.b_mx_block_size = 0
+
+            per_blk_ns = origami.att_compute_total_latency(prob_blk, hw, cfg, max_cus)
+            decode_fix_ns = n_kv_blocks * per_blk_ns
+            result['decode_fix_latency_us'] = decode_fix_ns / 1000.0
+            result['n_kv_blocks'] = n_kv_blocks
+
+        return result
 
     except ImportError:
         return None
