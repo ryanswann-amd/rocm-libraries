@@ -158,7 +158,6 @@ NB_MODULE(origami, m) {
       .def_rw("grid_selection", &origami::config_t::grid_selection)
       .def_rw("target", &origami::config_t::target)
       .def_rw("prediction_mode", &origami::config_t::prediction_mode)
-      .def_rw("target", &origami::config_t::target)
       .def_rw("grvw_a", &origami::config_t::grvw_a)
       .def_rw("grvw_b", &origami::config_t::grvw_b)
       .def_rw("gwvw_d", &origami::config_t::gwvw_d)

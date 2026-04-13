@@ -162,16 +162,8 @@ try:
     # This is a separate class from OrigamiMatmulSelector and only
     # executes Triton-specific code paths.  It does NOT affect the
     # hipblaslt / tensilelite OrigamiMatmulSelector in any way.
-    from .selector import (
-        TritonOrigamiMatmulSelector,
-        estimate_triton_lds_bytes,
-        check_triton_lds_capacity,
-    )
-    __all__.extend([
-        "TritonOrigamiMatmulSelector",
-        "estimate_triton_lds_bytes",
-        "check_triton_lds_capacity",
-    ])
+    from .selector import TritonOrigamiMatmulSelector
+    __all__.append("TritonOrigamiMatmulSelector")
 except ImportError:
     pass
 
