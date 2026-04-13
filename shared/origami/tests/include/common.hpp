@@ -53,12 +53,14 @@ inline origami::problem_t make_problem(size_t m,
                                        origami::transpose_t a_trans = origami::transpose_t::T,
                                        origami::transpose_t b_trans = origami::transpose_t::N,
                                        size_t batch                 = 1,
-                                       int mx_block_size            = 0) {
+                                       int mx_block_size            = 0,
+                                       size_t q_heads               = 32) {
   origami::problem_t problem;
   problem.size.m          = m;
   problem.size.n          = n;
   problem.size.k          = k;
   problem.batch           = batch;
+  problem.q_heads         = q_heads;
   problem.a_transpose     = a_trans;
   problem.b_transpose     = b_trans;
   problem.a_dtype         = origami::data_type_t::BFloat16;

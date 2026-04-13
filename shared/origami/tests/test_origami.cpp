@@ -96,11 +96,11 @@ TEST_CASE("Origami: compute_perf_gflops", "[origami]") {
       auto config = make_config(128, 128, 64, 32, 32, 8);
 
       auto latency_config_slow =
-          origami::compute_total_latency(problem, hardware_slow, config, hardware_slow.N_CU);
+          origami::gemm::compute_total_latency(problem, hardware_slow, config, hardware_slow.N_CU);
       auto flops_slow = origami::compute_perf_gflops(hardware_slow, problem, latency_config_slow);
 
       auto latency_config_fast =
-          origami::compute_total_latency(problem, hardware_fast, config, hardware_fast.N_CU);
+          origami::gemm::compute_total_latency(problem, hardware_fast, config, hardware_fast.N_CU);
       auto flops_fast = origami::compute_perf_gflops(hardware_fast, problem, latency_config_fast);
 
       REQUIRE(flops_fast > flops_slow);
@@ -567,7 +567,7 @@ TEST_CASE("Origami: simulation mode basic", "[origami][formocast]") {
       config.tensile().wave_group_n = 2;
       config.tensile().prefetch_global_read = 2;
       
-      double latency = origami::compute_total_latency(problem, hardware, config, hardware.N_CU);
+      double latency = origami::gemm::compute_total_latency(problem, hardware, config, hardware.N_CU);
       
       REQUIRE(latency > 0);
     }
@@ -597,9 +597,9 @@ TEST_CASE("Origami: simulation mode via compute_total_latency", "[origami][formo
       config_simulation.tensile().wave_group_n = 2;
       config_simulation.tensile().prefetch_global_read = 2;
       
-      double latency_estimation = origami::compute_total_latency(
+      double latency_estimation = origami::gemm::compute_total_latency(
           problem, hardware, config_estimation, hardware.N_CU);
-      double latency_simulation = origami::compute_total_latency(
+      double latency_simulation = origami::gemm::compute_total_latency(
           problem, hardware, config_simulation, hardware.N_CU);
       
       // Both should be positive
@@ -639,7 +639,7 @@ TEST_CASE("Origami: Formocast with various problem sizes", "[origami][formocast]
         config.tensile().wave_group_m = 2;
         config.tensile().wave_group_n = 2;
         
-        double latency = origami::compute_total_latency(problem, hardware, config, hardware.N_CU);
+        double latency = origami::gemm::compute_total_latency(problem, hardware, config, hardware.N_CU);
         
         INFO("Problem size: " << m << "x" << n << "x" << k);
         REQUIRE(latency > 0);
@@ -674,7 +674,7 @@ TEST_CASE("Origami: Formocast with different tile sizes", "[origami][formocast]"
         config.tensile().wave_group_m = 2;
         config.tensile().wave_group_n = 2;
         
-        double latency = origami::compute_total_latency(problem, hardware, config, hardware.N_CU);
+        double latency = origami::gemm::compute_total_latency(problem, hardware, config, hardware.N_CU);
         
         INFO("Tile size: " << mt_m << "x" << mt_n << "x" << mt_k);
         REQUIRE(latency > 0);

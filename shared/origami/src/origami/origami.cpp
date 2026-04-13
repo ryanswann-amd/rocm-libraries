@@ -541,9 +541,9 @@ std::vector<prediction_result_t> rank_configs(const problem_t& problem,
   latencies_configs.reserve(configs.size());
 
   for (auto& config : configs) {
-    if (!check_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype))
+    if (!gemm::check_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype))
       continue;
-    double latency = compute_total_latency(problem, hardware, config, hardware.N_CU);
+    double latency = gemm::compute_total_latency(problem, hardware, config, hardware.N_CU);
     if (latency != std::numeric_limits<double>::max())
       latencies_configs.push_back({latency, std::cref(config)});
   }

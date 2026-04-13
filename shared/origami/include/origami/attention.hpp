@@ -8,7 +8,7 @@
 #include "origami/types.hpp"
 
 namespace origami {
-namespace gemm {
+namespace attention {
 
 /**
  * @brief calculate the work utilization which is the ratio of the useful problem volume to the total scheduled volume.
@@ -245,5 +245,5 @@ double compute_total_latency(const problem_t& problem,
                              const config_t& config,
                              size_t max_cus);
 
-}  // namespace gemm
+}  // namespace attention
 }  // namespace origami

@@ -59,6 +59,22 @@ try:
         compute_number_of_output_tiles,
         # Reduction functions
         int_to_reduction_t,
+        # Attention functions
+        att_compute_total_latency,
+        att_compute_number_matrix_instructions,
+        att_compute_mt_compute_latency,
+        att_check_lds_capacity,
+        att_estimate_l2_hit,
+        att_estimate_mall_hit,
+        att_compute_memory_latency,
+        att_compute_tile_latency,
+        att_compute_timestep_latency,
+        att_calculate_work_utilization,
+        att_calculate_output_utilization,
+        att_compute_cu_occupancy,
+        att_arithmetic_intensity,
+        att_compute_mem_bw_from_occupancy,
+        att_compute_l2_hit_rate_global,
     )
 except ImportError as e:
     raise ImportError(
@@ -119,6 +135,22 @@ __all__ = [
     "compute_number_of_output_tiles",
     # Reduction functions
     "int_to_reduction_t",
+    # Attention functions
+    "att_compute_total_latency",
+    "att_compute_number_matrix_instructions",
+    "att_compute_mt_compute_latency",
+    "att_check_lds_capacity",
+    "att_estimate_l2_hit",
+    "att_estimate_mall_hit",
+    "att_compute_memory_latency",
+    "att_compute_tile_latency",
+    "att_compute_timestep_latency",
+    "att_calculate_work_utilization",
+    "att_calculate_output_utilization",
+    "att_compute_cu_occupancy",
+    "att_arithmetic_intensity",
+    "att_compute_mem_bw_from_occupancy",
+    "att_compute_l2_hit_rate_global",
 ]
 
 try:

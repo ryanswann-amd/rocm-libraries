@@ -8,6 +8,7 @@
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/vector.h>
+#include "origami/attention.hpp"
 #include "origami/gemm.hpp"
 #include "origami/hardware.hpp"
 #include "origami/origami.hpp"
@@ -172,6 +173,7 @@ NB_MODULE(origami, m) {
       .def(nanobind::init<>())
       .def_rw("size", &origami::problem_t::size)
       .def_rw("batch", &origami::problem_t::batch)
+      .def_rw("q_heads", &origami::problem_t::q_heads)
       .def_rw("a_transpose", &origami::problem_t::a_transpose)
       .def_rw("b_transpose", &origami::problem_t::b_transpose)
       .def_rw("a_dtype", &origami::problem_t::a_dtype)
@@ -285,36 +287,86 @@ NB_MODULE(origami, m) {
         static_cast<double (*)(const origami::problem_t&,
                                const origami::hardware_t&,
                                const origami::config_t&,
-                               size_t max_cus)>(&origami::compute_total_latency),
+                               size_t max_cus)>(&origami::gemm::compute_total_latency),
         "Compute total latency (uses Formocast when config.prediction_mode == simulation)");
   m.def("compute_number_matrix_instructions",
-        &origami::compute_number_matrix_instructions,
+        &origami::gemm::compute_number_matrix_instructions,
         "Compute the number of matrix instructions required");
   m.def("compute_mt_compute_latency",
-        &origami::compute_mt_compute_latency,
+        &origami::gemm::compute_mt_compute_latency,
         "Compute the latency to process a single macro-tile");
   m.def("check_lds_capacity",
-        &origami::check_lds_capacity,
+        &origami::gemm::check_lds_capacity,
         "Check if MT fits in LDS");
   m.def("estimate_l2_hit",
-        &origami::estimate_l2_hit,
+        &origami::gemm::estimate_l2_hit,
         "Estimate L2 hit rate");
   m.def("estimate_mall_hit",
-        &origami::estimate_mall_hit,
+        &origami::gemm::estimate_mall_hit,
         "Estimate MALL hit rate");
   m.def("compute_memory_latency",
-        &origami::compute_memory_latency,
+        &origami::gemm::compute_memory_latency,
         "Compute memory latency per macro tile");
   m.def("compute_tile_latency",
-        &origami::compute_tile_latency,
+        &origami::gemm::compute_tile_latency,
         "Compute latency to compute a K-complete tile");
   m.def("compute_timestep_latency",
-        &origami::compute_timestep_latency,
+        &origami::gemm::compute_timestep_latency,
         "Compute latency per K-complete MT wave");
 
   // StreamK functions
   m.def("compute_number_of_output_tiles",
         &origami::streamk::compute_number_of_output_tiles,
         "Compute number of output tiles");
+
+  // Attention functions
+  m.def("att_compute_total_latency",
+        static_cast<double (*)(const origami::problem_t&,
+                               const origami::hardware_t&,
+                               const origami::config_t&,
+                               size_t max_cus)>(&origami::attention::compute_total_latency),
+        "Compute total latency for Flash Attention");
+  m.def("att_compute_number_matrix_instructions",
+        &origami::attention::compute_number_matrix_instructions,
+        "Compute the number of matrix instructions required for attention");
+  m.def("att_compute_mt_compute_latency",
+        &origami::attention::compute_mt_compute_latency,
+        "Compute the latency to process a single macro-tile for attention");
+  m.def("att_check_lds_capacity",
+        &origami::attention::check_lds_capacity,
+        "Check if attention MT fits in LDS");
+  m.def("att_estimate_l2_hit",
+        &origami::attention::estimate_l2_hit,
+        "Estimate L2 hit rate for attention");
+  m.def("att_estimate_mall_hit",
+        &origami::attention::estimate_mall_hit,
+        "Estimate MALL hit rate for attention");
+  m.def("att_compute_memory_latency",
+        &origami::attention::compute_memory_latency,
+        "Compute memory latency per macro tile for attention");
+  m.def("att_compute_tile_latency",
+        &origami::attention::compute_tile_latency,
+        "Compute latency to compute a K-complete tile for attention");
+  m.def("att_compute_timestep_latency",
+        &origami::attention::compute_timestep_latency,
+        "Compute latency per K-complete MT wave for attention");
+  m.def("att_calculate_work_utilization",
+        &origami::attention::calculate_work_utilization,
+        "Calculate work utilization for attention");
+  m.def("att_calculate_output_utilization",
+        &origami::attention::calculate_output_utilization,
+        "Calculate output utilization for attention");
+  m.def("att_compute_cu_occupancy",
+        &origami::attention::compute_cu_occupancy,
+        "Compute CU occupancy for attention");
+  m.def("att_arithmetic_intensity",
+        &origami::attention::arithmetic_intensity,
+        "Compute arithmetic intensity for attention");
+  m.def("att_compute_mem_bw_from_occupancy",
+        &origami::attention::compute_mem_bw_from_occupancy,
+        "Compute memory bandwidth from occupancy for attention");
+  m.def("att_compute_l2_hit_rate_global",
+        &origami::attention::compute_l2_hit_rate_global,
+        "Compute global L2 hit rate for attention");
 
 }

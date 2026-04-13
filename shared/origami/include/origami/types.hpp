@@ -552,6 +552,9 @@ struct problem_t {
   /// Batch size.
   std::size_t batch = 1;
 
+  /// Number of query heads (for attention workloads).
+  std::size_t q_heads = 32;
+
   /// Transpose types (TT, TN, NT, TT.)
   transpose_t a_transpose = transpose_t::N;
   transpose_t b_transpose = transpose_t::N;
