@@ -130,3 +130,24 @@ except ImportError:
     # work without the dedicated Python selector
     pass
 
+try:
+    # Import the communications latency model (pure Python, no GPU deps)
+    from .comm import (
+        predict_comm_latency,
+        predict_comm_latency_ms,
+        select_partition,
+        compute_overlap_speedup,
+        get_profile,
+        list_hardware,
+        list_profiles,
+        CommProfile,
+    )
+    __all__.extend([
+        "predict_comm_latency", "predict_comm_latency_ms",
+        "select_partition", "compute_overlap_speedup",
+        "get_profile", "list_hardware", "list_profiles",
+        "CommProfile",
+    ])
+except ImportError:
+    pass
+
