@@ -541,12 +541,18 @@ std::vector<prediction_result_t> rank_configs(const problem_t& problem,
   latencies_configs.reserve(configs.size());
 
   for (auto& config : configs) {
-    if (!check_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype))
+    // Use Triton-aware LDS check (accounts for pipeline stages) when targeting Triton.
+    // For all other targets, use the raw tile-size LDS check.
+    bool lds_ok = (config.target == target_t::triton)
+        ? check_triton_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype)
+        : check_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype);
+    if (!lds_ok)
       continue;
 
-    // Decode-shape guard: when M <= 1, oversized N-blocks waste memory
-    // bandwidth without useful work. Clamp BLOCK_N to 64 for these shapes.
-    if (problem.size.m <= 1 && config.mt.n > 64)
+    // Decode-shape guard (Triton only): when M <= 1, oversized N-blocks waste
+    // memory bandwidth without useful work. Skip BLOCK_N > 64 for these shapes.
+    // Gated on target_t::triton to avoid changing hipBLASLt behavior.
+    if (config.target == target_t::triton && problem.size.m <= 1 && config.mt.n > 64)
       continue;
 
     double latency = compute_total_latency(problem, hardware, config, hardware.N_CU);
