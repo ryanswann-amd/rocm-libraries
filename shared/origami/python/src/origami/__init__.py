@@ -157,3 +157,21 @@ except ImportError:
     # work without the dedicated Python selector
     pass
 
+try:
+    # Import the Triton-specialized selector (target_t=triton gated).
+    # This is a separate class from OrigamiMatmulSelector and only
+    # executes Triton-specific code paths.  It does NOT affect the
+    # hipblaslt / tensilelite OrigamiMatmulSelector in any way.
+    from .selector import (
+        TritonOrigamiMatmulSelector,
+        estimate_triton_lds_bytes,
+        check_triton_lds_capacity,
+    )
+    __all__.extend([
+        "TritonOrigamiMatmulSelector",
+        "estimate_triton_lds_bytes",
+        "check_triton_lds_capacity",
+    ])
+except ImportError:
+    pass
+
