@@ -88,6 +88,15 @@ NB_MODULE(origami, m) {
       .value("simulation", origami::prediction_modes_t::simulation)
       .export_values();
 
+  // Target backend types for kernel execution (Triton specialization support)
+  nanobind::enum_<origami::target_t>(m, "target_t")
+      .value("generic", origami::target_t::generic)
+      .value("tensilelite", origami::target_t::tensilelite)
+      .value("rocroller", origami::target_t::rocroller)
+      .value("triton", origami::target_t::triton)
+      .value("composable_kernel", origami::target_t::composable_kernel)
+      .export_values();
+
   // Add new struct bindings
   nanobind::class_<origami::dim3_t>(m, "dim3_t")
       .def(nanobind::init<std::size_t, std::size_t, std::size_t>())
@@ -137,6 +146,7 @@ NB_MODULE(origami, m) {
       .def_rw("workspace_size_per_elem_c", &origami::config_t::workspace_size_per_elem_c)
       .def_rw("reduction_strategy", &origami::config_t::reduction_strategy)
       .def_rw("grid_selection", &origami::config_t::grid_selection)
+      .def_rw("target", &origami::config_t::target)
       .def_rw("prediction_mode", &origami::config_t::prediction_mode)
       .def_rw("grvw_a", &origami::config_t::grvw_a)
       .def_rw("grvw_b", &origami::config_t::grvw_b)
@@ -296,6 +306,21 @@ NB_MODULE(origami, m) {
   m.def("check_lds_capacity",
         &origami::check_lds_capacity,
         "Check if MT fits in LDS");
+  m.def("estimate_triton_lds_bytes",
+        &origami::estimate_triton_lds_bytes,
+        nanobind::arg("mt"),
+        nanobind::arg("a_dtype"),
+        nanobind::arg("b_dtype"),
+        nanobind::arg("num_stages") = 2,
+        "Estimate Triton kernel LDS usage in bytes (accounts for pipeline stages)");
+  m.def("check_triton_lds_capacity",
+        &origami::check_triton_lds_capacity,
+        nanobind::arg("hardware"),
+        nanobind::arg("mt"),
+        nanobind::arg("a_dtype"),
+        nanobind::arg("b_dtype"),
+        nanobind::arg("num_stages") = 2,
+        "Check if MT fits in LDS for Triton kernels (accounts for pipeline stages)");
   m.def("estimate_l2_hit",
         &origami::estimate_l2_hit,
         "Estimate L2 hit rate");

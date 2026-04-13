@@ -146,6 +146,47 @@ bool check_lds_capacity(const hardware_t& hardware,
                         dim3_t mt,
                         data_type_t a_dtype,
                         data_type_t b_dtype);
+
+/**
+ * @brief Estimate Triton kernel LDS usage in bytes (accounts for pipeline stages).
+ *
+ * Triton's AMD backend uses swizzled_shared / amd_rotating_shared encodings
+ * which rearrange bank addressing without adding padding bytes.  The LDS
+ * footprint is therefore the raw tile bytes times the number of pipeline
+ * buffers:
+ *   ns == 1:  max(A_bytes, B_bytes) — no pipelining, sequential alloc
+ *   ns >= 2:  (ns - 1) * (A_bytes + B_bytes) — software-pipelined
+ *
+ * @param mt Macro tile dimensions
+ * @param a_dtype Data type of operand A
+ * @param b_dtype Data type of operand B
+ * @param num_stages Pipeline stages (1, 2, or 3); Triton matmul uses 2 by default.
+ * @return size_t Estimated total LDS usage in bytes.
+ */
+size_t estimate_triton_lds_bytes(dim3_t mt,
+                                 data_type_t a_dtype,
+                                 data_type_t b_dtype,
+                                 int num_stages = 2);
+
+/**
+ * @brief Check if MT fits in LDS for Triton kernels (accounts for pipeline stages).
+ *
+ * Unlike the raw check_lds_capacity used by TensileLite, this function models
+ * Triton's multi-stage software pipelining LDS allocation. This function is only
+ * used when config_t::target == target_t::triton.
+ *
+ * @param hardware Hardware characteristics (@see origami::hardware_t)
+ * @param mt Macro tile dimensions
+ * @param a_dtype Data type of operand A
+ * @param b_dtype Data type of operand B
+ * @param num_stages Pipeline stages (default: 2)
+ * @return bool True if estimated Triton LDS usage fits within hardware LDS capacity.
+ */
+bool check_triton_lds_capacity(const hardware_t& hardware,
+                               dim3_t mt,
+                               data_type_t a_dtype,
+                               data_type_t b_dtype,
+                               int num_stages = 2);
 /**
  * @brief A linear-estimation method for estimating L2-hitrate.
  *
