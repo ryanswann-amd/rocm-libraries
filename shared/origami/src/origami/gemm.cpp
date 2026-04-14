@@ -387,63 +387,33 @@ bool check_lds_capacity(const hardware_t& hardware,
   return LDS_usage <= hardware.lds_capacity;
 }
 
-// Triton PaddedSharedEncoding: insert `padding` elements every `interval` elements.
-// Matches Triton's Dialect.cpp getPaddedSize exactly.
-static size_t padded_size_pow2(size_t unpadded, size_t interval, size_t padding) {
-  if (interval == 0 || padding == 0) return unpadded;
-  const int log2_interval = static_cast<int>(std::log2(interval));
-  const int log2_padding  = static_cast<int>(std::log2(padding));
-  size_t block_padding = (unpadded >> log2_interval) << log2_padding;
-  if (unpadded % interval == 0 && block_padding >= padding)
-    block_padding -= padding;
-  return unpadded + block_padding;
-}
-
-// Estimate Triton kernel LDS usage in bytes (accounts for pipeline stages
-// and PaddedSharedEncoding bank-conflict avoidance).
-// Matches the Python estimate_triton_lds_bytes exactly.
+// Estimate Triton kernel LDS usage in bytes.
+// Validated against actual Triton 3.6.0 compiled kernel metadata (n_shared_bytes).
+// The compiler allocates:
+//   stages == 1  →  max(A_tile_bytes, B_tile_bytes)        (A & B share the same LDS region)
+//   stages >= 2  →  (stages - 1) * (A_tile_bytes + B_tile_bytes)
 size_t estimate_triton_lds_bytes(dim3_t mt,
                                  data_type_t a_dtype,
                                  data_type_t b_dtype,
                                  int num_stages) {
-  const double bytes_a = data_type_to_bytes(a_dtype);
-  const double bytes_b = data_type_to_bytes(b_dtype);
-  const size_t MT_M = mt.m, MT_N = mt.n, MT_K = mt.k;
+  const size_t bytes_a = static_cast<size_t>(data_type_to_bytes(a_dtype));
+  const size_t bytes_b = static_cast<size_t>(data_type_to_bytes(b_dtype));
 
-  const size_t elem_a = MT_M * MT_K;
-  const size_t elem_b = MT_K * MT_N;
+  const size_t a_tile = mt.m * mt.k * bytes_a;
+  const size_t b_tile = mt.k * mt.n * bytes_b;
 
-  // [[32, 4]] padding (fast path)
-  size_t padded_a = padded_size_pow2(elem_a, 32, 4);
-  size_t padded_b = padded_size_pow2(elem_b, 32, 4);
+  if (num_stages <= 1)
+    return std::max(a_tile, b_tile);
 
-  // [[block_k, 8]] for A when block_k is power of 2
-  if (MT_K > 0 && (MT_K & (MT_K - 1)) == 0) {
-    size_t alt_a = padded_size_pow2(elem_a, MT_K, 8);
-    if (alt_a > padded_a) padded_a = alt_a;
-  }
-  // [[block_n, 8]] for B when block_n is power of 2
-  if (MT_N > 0 && (MT_N & (MT_N - 1)) == 0) {
-    size_t alt_b = padded_size_pow2(elem_b, MT_N, 8);
-    if (alt_b > padded_b) padded_b = alt_b;
-  }
-
-  const size_t padded_per_stage = static_cast<size_t>(padded_a * bytes_a + padded_b * bytes_b);
-  return static_cast<size_t>(num_stages) * padded_per_stage;
+  return static_cast<size_t>(num_stages - 1) * (a_tile + b_tile);
 }
 
-// Check if MT fits in LDS for Triton kernels.
-// Includes fast-rejection on raw (unpadded) size before computing padded estimate.
+// Check if tile fits in LDS for Triton kernels.
 bool check_triton_lds_capacity(const hardware_t& hardware,
                                dim3_t mt,
                                data_type_t a_dtype,
                                data_type_t b_dtype,
                                int num_stages) {
-  const double bytes_a = data_type_to_bytes(a_dtype);
-  const double bytes_b = data_type_to_bytes(b_dtype);
-  const size_t raw = static_cast<size_t>(
-      (mt.mk() * bytes_a + mt.nk() * bytes_b) * num_stages);
-  if (raw > hardware.lds_capacity) return false;
   return estimate_triton_lds_bytes(mt, a_dtype, b_dtype, num_stages) <= hardware.lds_capacity;
 }
 

@@ -32,54 +32,46 @@ class TestTargetT:
 class TestTritonLDS:
     """Tests for Triton LDS estimation functions.
 
-    Uses the exact Python padded-encoding logic from tritonBLAS as the reference.
+    Reference formula validated against Triton 3.6.0 compiled kernel metadata
+    (n_shared_bytes) on AMD Instinct GPUs:
+        stages == 1  →  max(A_tile_bytes, B_tile_bytes)
+        stages >= 2  →  (stages - 1) * (A_tile_bytes + B_tile_bytes)
     """
 
     @staticmethod
-    def _padded_size_pow2(unpadded, interval, padding):
-        log2_i = (interval - 1).bit_length()
-        log2_p = (padding - 1).bit_length() if padding else 0
-        bp = (unpadded >> log2_i) << log2_p
-        if unpadded % interval == 0 and bp >= padding:
-            bp -= padding
-        return unpadded + bp
-
-    @classmethod
-    def _python_estimate(cls, bm, bn, bk, bytes_a, bytes_b, num_stages=2):
-        """Exact Python reference for estimate_triton_lds_bytes."""
-        elem_a, elem_b = bm * bk, bk * bn
-        pa = cls._padded_size_pow2(elem_a, 32, 4)
-        pb = cls._padded_size_pow2(elem_b, 32, 4)
-        if bk > 0 and (bk & (bk - 1)) == 0:
-            alt = cls._padded_size_pow2(elem_a, bk, 8)
-            if alt > pa:
-                pa = alt
-        if bn > 0 and (bn & (bn - 1)) == 0:
-            alt = cls._padded_size_pow2(elem_b, bn, 8)
-            if alt > pb:
-                pb = alt
-        return num_stages * int(pa * bytes_a + pb * bytes_b)
+    def _reference_estimate(bm, bn, bk, bytes_a, bytes_b, num_stages=2):
+        a_tile = bm * bk * bytes_a
+        b_tile = bk * bn * bytes_b
+        if num_stages <= 1:
+            return max(a_tile, b_tile)
+        return (num_stages - 1) * (a_tile + b_tile)
 
     @pytest.fixture
     def hw(self):
         return HARDWARE["gfx942"]
 
-    def test_estimate_triton_lds_bytes_2stage(self):
-        mt = origami.dim3_t(128, 128, 32)
-        result = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 2)
-        assert result == self._python_estimate(128, 128, 32, 2, 2, 2)
-
-    def test_estimate_triton_lds_bytes_1stage(self):
+    def test_estimate_1stage_symmetric(self):
         mt = origami.dim3_t(128, 128, 32)
         result = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 1)
-        assert result == self._python_estimate(128, 128, 32, 2, 2, 1)
+        assert result == max(128 * 32 * 2, 32 * 128 * 2)  # max(A, B)
 
-    def test_estimate_triton_lds_bytes_3stage(self):
+    def test_estimate_1stage_asymmetric(self):
+        mt = origami.dim3_t(128, 64, 64)
+        result = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 1)
+        a_tile, b_tile = 128 * 64 * 2, 64 * 64 * 2
+        assert result == max(a_tile, b_tile)
+
+    def test_estimate_2stage(self):
+        mt = origami.dim3_t(128, 128, 32)
+        result = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 2)
+        assert result == 1 * (128 * 32 * 2 + 32 * 128 * 2)  # (2-1)*(A+B)
+
+    def test_estimate_3stage(self):
         mt = origami.dim3_t(128, 128, 32)
         result = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 3)
-        assert result == self._python_estimate(128, 128, 32, 2, 2, 3)
+        assert result == 2 * (128 * 32 * 2 + 32 * 128 * 2)  # (3-1)*(A+B)
 
-    def test_estimate_triton_lds_bytes_default_stages(self):
+    def test_estimate_default_stages(self):
         mt = origami.dim3_t(256, 256, 64)
         result_default = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half)
         result_explicit = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 2)
@@ -93,17 +85,15 @@ class TestTritonLDS:
         mt = origami.dim3_t(512, 512, 128)
         assert not origami.check_triton_lds_capacity(hw, mt, origami.data_type_t.Half, origami.data_type_t.Half)
 
-    def test_triton_lds_vs_standard_lds(self, hw):
+    def test_stages_ordering(self, hw):
         mt = origami.dim3_t(128, 128, 32)
-        triton_2 = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 2)
-        triton_3 = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 3)
-        assert triton_3 > triton_2
-        # Padded encoding should be larger than raw tile size
-        raw = (128 * 32 * 2 + 32 * 128 * 2) * 2
-        assert triton_2 > raw
+        t1 = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 1)
+        t2 = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 2)
+        t3 = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 3)
+        assert t1 < t2 < t3
 
-    def test_estimate_matches_python_sweep(self):
-        """Sweep a range of tile sizes and verify C++ matches Python exactly."""
+    def test_estimate_matches_reference_sweep(self):
+        """Sweep tile sizes and verify C++ matches the validated formula."""
         for bm in [16, 32, 64, 128, 256]:
             for bn in [16, 32, 64, 128, 256]:
                 for bk in [16, 32, 64, 128, 256, 512]:
@@ -112,9 +102,9 @@ class TestTritonLDS:
                         cpp = origami.estimate_triton_lds_bytes(
                             mt, origami.data_type_t.Half, origami.data_type_t.Half, ns
                         )
-                        py = self._python_estimate(bm, bn, bk, 2, 2, ns)
-                        assert cpp == py, (
-                            f"Mismatch at {bm}x{bn}x{bk} stages={ns}: C++={cpp} Python={py}"
+                        ref = self._reference_estimate(bm, bn, bk, 2, 2, ns)
+                        assert cpp == ref, (
+                            f"Mismatch at {bm}x{bn}x{bk} stages={ns}: C++={cpp} ref={ref}"
                         )
 
 
