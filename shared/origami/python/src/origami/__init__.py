@@ -17,6 +17,7 @@ try:
         grid_selection_t,
         reduction_t,
         prediction_modes_t,
+        target_t,
         # Data structures
         dim3_t,
         dim4_t,
@@ -48,6 +49,8 @@ try:
         compute_mt_compute_latency,
         # Memory functions
         check_lds_capacity,
+        estimate_triton_lds_bytes,
+        check_triton_lds_capacity,
         estimate_l2_hit,
         estimate_mall_hit,
         compute_memory_latency,
@@ -87,6 +90,7 @@ __all__ = [
     "grid_selection_t",
     "reduction_t",
     "prediction_modes_t",
+    "target_t",
     # Data structures
     "dim3_t",
     "dim4_t",
@@ -123,6 +127,8 @@ __all__ = [
     "count_unique_tiles_timestep",
     "estimate_cache_hit_rates",
     "check_lds_capacity",
+    "estimate_triton_lds_bytes",
+    "check_triton_lds_capacity",
     "estimate_l2_hit",
     "estimate_mall_hit",
     "compute_memory_latency",
@@ -140,10 +146,24 @@ __all__ = [
 
 try:
     # Import the python selector if possible (requires torch)
-    from .selector import OrigamiMatmulSelector
+    from .selector import (
+        OrigamiMatmulSelector,
+        estimate_triton_lds_bytes as py_estimate_triton_lds_bytes,
+        check_triton_lds_capacity as py_check_triton_lds_capacity,
+    )
     __all__.append("OrigamiMatmulSelector")
 except ImportError:
     # Do not raise this error if import fails - compiled Origami bindings still
     # work without the dedicated Python selector
+    pass
+
+try:
+    # Import the Triton-specialized selector (target_t=triton gated).
+    # This is a separate class from OrigamiMatmulSelector and only
+    # executes Triton-specific code paths.  It does NOT affect the
+    # hipblaslt / tensilelite OrigamiMatmulSelector in any way.
+    from .selector import TritonOrigamiMatmulSelector
+    __all__.append("TritonOrigamiMatmulSelector")
+except ImportError:
     pass
 
