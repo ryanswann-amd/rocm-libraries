@@ -387,6 +387,89 @@ bool check_lds_capacity(const hardware_t& hardware,
   return LDS_usage <= hardware.lds_capacity;
 }
 
+// Estimate Triton kernel LDS usage in bytes (accounts for pipeline stages).
+size_t estimate_triton_lds_bytes(dim3_t mt,
+                                 data_type_t a_dtype,
+                                 data_type_t b_dtype,
+                                 int num_stages) {
+  const size_t a_bytes = static_cast<size_t>(std::ceil(mt.mk() * data_type_to_bytes(a_dtype)));
+  const size_t b_bytes = static_cast<size_t>(std::ceil(mt.nk() * data_type_to_bytes(b_dtype)));
+
+  if (num_stages <= 1) { return std::max(a_bytes, b_bytes); }
+  return static_cast<size_t>(num_stages - 1) * (a_bytes + b_bytes);
+}
+
+// Check if MT fits in LDS for Triton kernels.
+bool check_triton_lds_capacity(const hardware_t& hardware,
+                               dim3_t mt,
+                               data_type_t a_dtype,
+                               data_type_t b_dtype,
+                               int num_stages) {
+  return estimate_triton_lds_bytes(mt, a_dtype, b_dtype, num_stages) <= hardware.lds_capacity;
+}
+
+// Select work-stealing parameters for Triton.
+triton_ws_params_t select_triton_ws_params(size_t m, size_t n, size_t block_m, size_t block_n) {
+  const size_t grid_m     = math::safe_ceil_div(m, block_m);
+  const size_t grid_n     = math::safe_ceil_div(n, block_n);
+  const size_t num_tiles  = grid_m * grid_n;
+
+  // MI300X-tuned thresholds
+  constexpr size_t kFewTiles   = 128;
+  constexpr size_t kManyTiles  = 1024;
+
+  int counters_per_xcd;
+  int wgm;
+
+  if (num_tiles < kFewTiles) {
+    counters_per_xcd = 1;
+    wgm = static_cast<int>(grid_n);
+  } else if (num_tiles < kManyTiles) {
+    counters_per_xcd = 4;
+    wgm = std::max(1, static_cast<int>(grid_n / 4));
+  } else {
+    counters_per_xcd = 8;
+    wgm = std::max(1, static_cast<int>(grid_n / 8));
+  }
+
+  return {counters_per_xcd, wgm};
+}
+
+// Compute optimal local/global tile split for hierarchical work-stealing.
+triton_hierarchical_split_t compute_triton_hierarchical_split(
+    size_t m, size_t n, size_t block_m, size_t block_n,
+    size_t num_xcds, size_t n_cu, size_t cu_per_l2) {
+  const size_t grid_m     = math::safe_ceil_div(m, block_m);
+  const size_t grid_n     = math::safe_ceil_div(n, block_n);
+  const size_t total      = grid_m * grid_n;
+
+  if (num_xcds == 0) num_xcds = 1;
+  if (cu_per_l2 == 0) cu_per_l2 = 1;
+
+  const size_t per_xcd  = math::safe_ceil_div(total, num_xcds);
+  const size_t local    = std::min(per_xcd, cu_per_l2 * 2);
+  const size_t global   = total > (local * num_xcds) ? total - (local * num_xcds) : 0;
+
+  return {local, global};
+}
+
+// Compute Triton-specific StreamK grid size.
+size_t compute_triton_sk_grid(size_t m, size_t n, size_t k,
+                              size_t block_m, size_t block_n, size_t block_k,
+                              size_t n_cu, size_t out_dtype_bits) {
+  const size_t grid_m     = math::safe_ceil_div(m, block_m);
+  const size_t grid_n     = math::safe_ceil_div(n, block_n);
+  const size_t num_tiles  = grid_m * grid_n;
+  const size_t k_tiles    = math::safe_ceil_div(k, block_k);
+  const size_t total_iters = num_tiles * k_tiles;
+
+  if (total_iters <= n_cu || num_tiles >= n_cu) { return num_tiles; }
+
+  const size_t dp_tiles  = total_iters / k_tiles;
+  (void)out_dtype_bits;
+  return std::min(n_cu, dp_tiles);
+}
+
 // Compute limited achievable memory bandwidth based on active CUs
 double compute_mem_bw_from_occupancy(const hardware_t& hardware, size_t num_active_cus) {
   const double CUs = static_cast<double>(num_active_cus);
@@ -1865,6 +1948,8 @@ double compute_total_latency(const problem_t& problem,
   // 0) Short-circuit
   // We don't need to compute latency for all MTs. With this, we can shortcut.
   bool shortCircuit = true;
+  const bool is_triton = (config.target == target_t::triton);
+
   if (shortCircuit) {
     // When problem dimensions are small enough that we can fit them in one tile, we should do
     // so. This short circuit condition also decreases selection latency when problems are very
@@ -1873,27 +1958,31 @@ double compute_total_latency(const problem_t& problem,
     if (M <= 256 && N <= 256 && K < 1024 && batch != 1 && (MT_M < M || MT_N < N))
       return std::numeric_limits<double>::max();
 
-    // Use Dot2 only for M < 3
-    if (MI_M == 1 && MI_N == 1 && MI_K == 64 && M > 2) return std::numeric_limits<double>::max();
-
-    size_t K_mod_128bytes    = K * a_bits % 1024;
-    size_t MT_K_mod_128bytes = MT_K * a_bits % 1024;
-    if (K_mod_128bytes == 0 && MT_K_mod_128bytes == 0) {
-      // avoid division by 0 if K == 0
-      if (M <= MT_M * 2 && !b_trans && ((N * b_bits) / (M * a_bits) > 5)) {
-        // Use nontemporal B
-        if (!(config.cache_hints_b == 4)) { return std::numeric_limits<double>::max(); }
-      } else if (N <= MT_N * 2 && a_trans && ((M * a_bits) / (N * b_bits) > 5)) {
-        // Use Non Temporal A
-        if (!(config.cache_hints_a == 4)) { return std::numeric_limits<double>::max(); }
-      } else {
-        // Never use Non Temporal
-        if (config.cache_hints_a || config.cache_hints_b) {
-          return std::numeric_limits<double>::max();
-        }
-      }
-    } else if (config.cache_hints_a || config.cache_hints_b) {
+    // Use Dot2 only for M < 3 — Triton doesn't use Dot2 MI, skip this gate
+    if (!is_triton && MI_M == 1 && MI_N == 1 && MI_K == 64 && M > 2)
       return std::numeric_limits<double>::max();
+
+    // Cache-hints enforcement: Triton manages its own caching, skip nontemporal gating
+    if (!is_triton) {
+      size_t K_mod_128bytes    = K * a_bits % 1024;
+      size_t MT_K_mod_128bytes = MT_K * a_bits % 1024;
+      if (K_mod_128bytes == 0 && MT_K_mod_128bytes == 0) {
+        // avoid division by 0 if K == 0
+        if (M <= MT_M * 2 && !b_trans && ((N * b_bits) / (M * a_bits) > 5)) {
+          // Use nontemporal B
+          if (!(config.cache_hints_b == 4)) { return std::numeric_limits<double>::max(); }
+        } else if (N <= MT_N * 2 && a_trans && ((M * a_bits) / (N * b_bits) > 5)) {
+          // Use Non Temporal A
+          if (!(config.cache_hints_a == 4)) { return std::numeric_limits<double>::max(); }
+        } else {
+          // Never use Non Temporal
+          if (config.cache_hints_a || config.cache_hints_b) {
+            return std::numeric_limits<double>::max();
+          }
+        }
+      } else if (config.cache_hints_a || config.cache_hints_b) {
+        return std::numeric_limits<double>::max();
+      }
     }
   }
 
@@ -1909,6 +1998,14 @@ double compute_total_latency(const problem_t& problem,
   //  4) Add parallel reduction kernel cost (separate kernel launch, 0 if not parallel)
   double L_parallel_reduce = compute_parallel_reduction_latency(problem, hardware, config, context);
   total_latency += L_parallel_reduce;
+
+  // 5) Triton near-square tile preference: 256x256x64 empirically outperforms
+  //    asymmetric 256xN or Mx256 tiles due to better wavefront utilization and
+  //    L2 reuse patterns in Triton's dispatch.  Apply a 5% latency discount so
+  //    it wins tie-breaks naturally in rank_configs().
+  if (is_triton && MT_M == 256 && MT_N == 256 && MT_K == 64) {
+    total_latency *= 0.95;
+  }
 
   if (context.debug) {
     OLOG_DEBUG("L_parallel_reduce: " << L_parallel_reduce);

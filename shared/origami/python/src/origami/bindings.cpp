@@ -86,6 +86,14 @@ NB_MODULE(origami, m) {
       .value("simulation", origami::prediction_modes_t::simulation)
       .export_values();
 
+  nanobind::enum_<origami::target_t>(m, "target_t")
+      .value("generic", origami::target_t::generic)
+      .value("tensilelite", origami::target_t::tensilelite)
+      .value("rocroller", origami::target_t::rocroller)
+      .value("triton", origami::target_t::triton)
+      .value("composable_kernel", origami::target_t::composable_kernel)
+      .export_values();
+
   // Add new struct bindings
   nanobind::class_<origami::dim3_t>(m, "dim3_t")
       .def(nanobind::init<std::size_t, std::size_t, std::size_t>())
@@ -148,6 +156,7 @@ NB_MODULE(origami, m) {
       .def_rw("reduction_strategy", &origami::config_t::reduction_strategy)
       .def_rw("grid_selection", &origami::config_t::grid_selection)
       .def_rw("prediction_mode", &origami::config_t::prediction_mode)
+      .def_rw("target", &origami::config_t::target)
       .def_rw("grvw_a", &origami::config_t::grvw_a)
       .def_rw("grvw_b", &origami::config_t::grvw_b)
       .def_rw("gwvw_d", &origami::config_t::gwvw_d)
@@ -312,6 +321,45 @@ NB_MODULE(origami, m) {
         &origami::compute_launch_parameters,
         "Compute launch parameters for the kernel");
   m.def("check_lds_capacity", &origami::check_lds_capacity, "Check if MT fits in LDS");
+
+  // Triton-specific struct bindings
+  nanobind::class_<origami::triton_ws_params_t>(m, "triton_ws_params_t")
+      .def(nanobind::init<>())
+      .def_rw("counters_per_xcd", &origami::triton_ws_params_t::counters_per_xcd)
+      .def_rw("workgroup_mapping", &origami::triton_ws_params_t::workgroup_mapping);
+
+  nanobind::class_<origami::triton_hierarchical_split_t>(m, "triton_hierarchical_split_t")
+      .def(nanobind::init<>())
+      .def_rw("local_per_xcd", &origami::triton_hierarchical_split_t::local_per_xcd)
+      .def_rw("global_tiles", &origami::triton_hierarchical_split_t::global_tiles);
+
+  // Triton LDS functions
+  m.def("estimate_triton_lds_bytes",
+        &origami::estimate_triton_lds_bytes,
+        nanobind::arg("mt"),
+        nanobind::arg("a_dtype"),
+        nanobind::arg("b_dtype"),
+        nanobind::arg("num_stages") = 2,
+        "Estimate Triton kernel LDS usage in bytes");
+  m.def("check_triton_lds_capacity",
+        &origami::check_triton_lds_capacity,
+        nanobind::arg("hardware"),
+        nanobind::arg("mt"),
+        nanobind::arg("a_dtype"),
+        nanobind::arg("b_dtype"),
+        nanobind::arg("num_stages") = 2,
+        "Check if MT fits in LDS for Triton kernels");
+
+  // Triton primitive functions
+  m.def("select_triton_ws_params",
+        &origami::select_triton_ws_params,
+        "Select work-stealing parameters for Triton kernels");
+  m.def("compute_triton_hierarchical_split",
+        &origami::compute_triton_hierarchical_split,
+        "Compute hierarchical local/global tile split for Triton");
+  m.def("compute_triton_sk_grid",
+        &origami::compute_triton_sk_grid,
+        "Compute Triton-specific StreamK grid size");
   m.def("compute_mem_bw_from_occupancy",
         &origami::compute_mem_bw_from_occupancy,
         "Compute limited achievable memory bandwidth based on active CUs");

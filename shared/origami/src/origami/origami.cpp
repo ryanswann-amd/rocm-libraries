@@ -553,8 +553,19 @@ std::vector<prediction_result_t> rank_configs(const problem_t& problem,
   latencies_configs.reserve(configs.size());
 
   for (auto& config : configs) {
-    if (!check_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype))
-      continue;
+    const bool is_triton = (config.target == target_t::triton);
+
+    // Use Triton-aware LDS check when target is Triton
+    if (is_triton) {
+      if (!check_triton_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype))
+        continue;
+      // Decode-shape guard: skip wide N tiles when M is very small (decode-like)
+      if (problem.size.m <= 1 && config.mt.n > 64) continue;
+    } else {
+      if (!check_lds_capacity(hardware, config.mt, problem.a_dtype, problem.b_dtype))
+        continue;
+    }
+
     double latency = compute_total_latency(problem, hardware, config, hardware.N_CU);
     if (latency != std::numeric_limits<double>::max())
       latencies_configs.push_back({latency, std::cref(config)});
@@ -721,8 +732,28 @@ prediction_result_t select_config(const problem_t& problem,
                                   const std::vector<config_t>& configs) {
   auto ranked_configs = rank_configs(problem, hardware, configs);
 
-  // Return the top configuration
-  return ranked_configs[0];
+  auto& best = ranked_configs[0];
+  if (best.config.target == target_t::triton) {
+    // Hard override matching tritonblas behavior: if the winner has one 256
+    // dimension but not the other, snap to 256x256x64 when it fits in LDS.
+    // The latency discount in compute_total_latency() handles the soft bias;
+    // this catches edge cases where 256x256x64 exists but didn't quite win.
+    const auto& mt = best.config.mt;
+    bool has_one_256 = (mt.m == 256) != (mt.n == 256);
+    if (has_one_256) {
+      dim3_t candidate_mt{256, 256, 64};
+      if (check_triton_lds_capacity(hardware, candidate_mt,
+                                    problem.a_dtype, problem.b_dtype)) {
+        for (auto& r : ranked_configs) {
+          if (r.config.mt.m == 256 && r.config.mt.n == 256 && r.config.mt.k == 64) {
+            return r;
+          }
+        }
+      }
+    }
+  }
+
+  return best;
 }
 
 double compute_perf_gflops(const hardware_t& hardware,
