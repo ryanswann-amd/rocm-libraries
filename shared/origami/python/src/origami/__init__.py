@@ -147,3 +147,26 @@ except ImportError:
     # work without the dedicated Python selector
     pass
 
+try:
+    # Import the communications latency model (pure Python, no GPU deps)
+    from .comm import (
+        predict_comm_latency,
+        predict_comm_latency_ms,
+        predict_for_tensor,
+        estimate_allreduce_ms,
+        predict_overlap_latency,
+        get_optimal_cu_partition,
+        dtype_to_bytes,
+    )
+    __all__.extend([
+        "predict_comm_latency",
+        "predict_comm_latency_ms",
+        "predict_for_tensor",
+        "estimate_allreduce_ms",
+        "predict_overlap_latency",
+        "get_optimal_cu_partition",
+        "dtype_to_bytes",
+    ])
+except ImportError:
+    pass
+
