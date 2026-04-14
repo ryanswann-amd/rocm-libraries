@@ -961,6 +961,47 @@ std::pair<size_t, size_t> compute_l2_tiles(const problem_t& problem,
   return {std::max(l2_m, static_cast<size_t>(1)), std::max(l2_n, static_cast<size_t>(1))};
 }
 
+// Estimate Triton kernel LDS usage in bytes (accounts for pipeline stages).
+size_t estimate_triton_lds_bytes(dim3_t mt,
+                                 data_type_t a_dtype,
+                                 data_type_t b_dtype,
+                                 int num_stages) {
+  auto a_bytes = data_type_to_bytes(a_dtype);
+  auto b_bytes = data_type_to_bytes(b_dtype);
+  double a_tile_bytes = static_cast<double>(mt.m) * static_cast<double>(mt.k) * a_bytes;
+  double b_tile_bytes = static_cast<double>(mt.k) * static_cast<double>(mt.n) * b_bytes;
+
+  double lds_usage;
+  if (num_stages <= 1) {
+    lds_usage = std::max(a_tile_bytes, b_tile_bytes);
+  } else {
+    lds_usage = static_cast<double>(num_stages - 1) * (a_tile_bytes + b_tile_bytes);
+  }
+  return static_cast<size_t>(lds_usage);
+}
+
+// Check if MT fits in LDS for Triton kernels (accounts for pipeline stages).
+bool check_triton_lds_capacity(const hardware_t& hardware,
+                               dim3_t mt,
+                               data_type_t a_dtype,
+                               data_type_t b_dtype,
+                               int num_stages) {
+  return estimate_triton_lds_bytes(mt, a_dtype, b_dtype, num_stages) <= hardware.lds_capacity;
+}
+
+// Compute limited achievable memory bandwidth based on active CUs
+double compute_mem_bw_from_occupancy(const hardware_t& hardware, size_t num_active_cus) {
+  const double CUs = static_cast<double>(num_active_cus);
+
+  if (num_active_cus > hardware.N_CU) return 1.0;
+
+  const double bw_limited = std::get<0>(hardware.mem_bw_per_wg_coefficients) * CUs * CUs +
+                            std::get<1>(hardware.mem_bw_per_wg_coefficients) * CUs +
+                            std::get<2>(hardware.mem_bw_per_wg_coefficients);
+
+  return std::min(bw_limited, 1.0);
+}
+
 // Estimate L2 hit rate
 double estimate_l2_hit(const problem_t& problem,
                        const hardware_t& hardware,
@@ -1876,24 +1917,28 @@ double compute_total_latency(const problem_t& problem,
     // Use Dot2 only for M < 3
     if (MI_M == 1 && MI_N == 1 && MI_K == 64 && M > 2) return std::numeric_limits<double>::max();
 
-    size_t K_mod_128bytes    = K * a_bits % 1024;
-    size_t MT_K_mod_128bytes = MT_K * a_bits % 1024;
-    if (K_mod_128bytes == 0 && MT_K_mod_128bytes == 0) {
-      // avoid division by 0 if K == 0
-      if (M <= MT_M * 2 && !b_trans && ((N * b_bits) / (M * a_bits) > 5)) {
-        // Use nontemporal B
-        if (!(config.cache_hints_b == 4)) { return std::numeric_limits<double>::max(); }
-      } else if (N <= MT_N * 2 && a_trans && ((M * a_bits) / (N * b_bits) > 5)) {
-        // Use Non Temporal A
-        if (!(config.cache_hints_a == 4)) { return std::numeric_limits<double>::max(); }
-      } else {
-        // Never use Non Temporal
-        if (config.cache_hints_a || config.cache_hints_b) {
-          return std::numeric_limits<double>::max();
+    // Cache-hints filtering: TensileLite-specific (Non-Temporal flags).
+    // Triton does not use cache hints, so skip this block for Triton targets.
+    if (config.target != target_t::triton) {
+      size_t K_mod_128bytes    = K * a_bits % 1024;
+      size_t MT_K_mod_128bytes = MT_K * a_bits % 1024;
+      if (K_mod_128bytes == 0 && MT_K_mod_128bytes == 0) {
+        // avoid division by 0 if K == 0
+        if (M <= MT_M * 2 && !b_trans && ((N * b_bits) / (M * a_bits) > 5)) {
+          // Use nontemporal B
+          if (!(config.cache_hints_b == 4)) { return std::numeric_limits<double>::max(); }
+        } else if (N <= MT_N * 2 && a_trans && ((M * a_bits) / (N * b_bits) > 5)) {
+          // Use Non Temporal A
+          if (!(config.cache_hints_a == 4)) { return std::numeric_limits<double>::max(); }
+        } else {
+          // Never use Non Temporal
+          if (config.cache_hints_a || config.cache_hints_b) {
+            return std::numeric_limits<double>::max();
+          }
         }
+      } else if (config.cache_hints_a || config.cache_hints_b) {
+        return std::numeric_limits<double>::max();
       }
-    } else if (config.cache_hints_a || config.cache_hints_b) {
-      return std::numeric_limits<double>::max();
     }
   }
 
