@@ -387,24 +387,63 @@ bool check_lds_capacity(const hardware_t& hardware,
   return LDS_usage <= hardware.lds_capacity;
 }
 
-// Estimate Triton kernel LDS usage in bytes (accounts for pipeline stages).
+// Triton PaddedSharedEncoding: insert `padding` elements every `interval` elements.
+// Matches Triton's Dialect.cpp getPaddedSize exactly.
+static size_t padded_size_pow2(size_t unpadded, size_t interval, size_t padding) {
+  if (interval == 0 || padding == 0) return unpadded;
+  const int log2_interval = static_cast<int>(std::log2(interval));
+  const int log2_padding  = static_cast<int>(std::log2(padding));
+  size_t block_padding = (unpadded >> log2_interval) << log2_padding;
+  if (unpadded % interval == 0 && block_padding >= padding)
+    block_padding -= padding;
+  return unpadded + block_padding;
+}
+
+// Estimate Triton kernel LDS usage in bytes (accounts for pipeline stages
+// and PaddedSharedEncoding bank-conflict avoidance).
+// Matches the Python estimate_triton_lds_bytes exactly.
 size_t estimate_triton_lds_bytes(dim3_t mt,
                                  data_type_t a_dtype,
                                  data_type_t b_dtype,
                                  int num_stages) {
-  const size_t a_bytes = static_cast<size_t>(std::ceil(mt.mk() * data_type_to_bytes(a_dtype)));
-  const size_t b_bytes = static_cast<size_t>(std::ceil(mt.nk() * data_type_to_bytes(b_dtype)));
+  const double bytes_a = data_type_to_bytes(a_dtype);
+  const double bytes_b = data_type_to_bytes(b_dtype);
+  const size_t MT_M = mt.m, MT_N = mt.n, MT_K = mt.k;
 
-  if (num_stages <= 1) { return std::max(a_bytes, b_bytes); }
-  return static_cast<size_t>(num_stages - 1) * (a_bytes + b_bytes);
+  const size_t elem_a = MT_M * MT_K;
+  const size_t elem_b = MT_K * MT_N;
+
+  // [[32, 4]] padding (fast path)
+  size_t padded_a = padded_size_pow2(elem_a, 32, 4);
+  size_t padded_b = padded_size_pow2(elem_b, 32, 4);
+
+  // [[block_k, 8]] for A when block_k is power of 2
+  if (MT_K > 0 && (MT_K & (MT_K - 1)) == 0) {
+    size_t alt_a = padded_size_pow2(elem_a, MT_K, 8);
+    if (alt_a > padded_a) padded_a = alt_a;
+  }
+  // [[block_n, 8]] for B when block_n is power of 2
+  if (MT_N > 0 && (MT_N & (MT_N - 1)) == 0) {
+    size_t alt_b = padded_size_pow2(elem_b, MT_N, 8);
+    if (alt_b > padded_b) padded_b = alt_b;
+  }
+
+  const size_t padded_per_stage = static_cast<size_t>(padded_a * bytes_a + padded_b * bytes_b);
+  return static_cast<size_t>(num_stages) * padded_per_stage;
 }
 
 // Check if MT fits in LDS for Triton kernels.
+// Includes fast-rejection on raw (unpadded) size before computing padded estimate.
 bool check_triton_lds_capacity(const hardware_t& hardware,
                                dim3_t mt,
                                data_type_t a_dtype,
                                data_type_t b_dtype,
                                int num_stages) {
+  const double bytes_a = data_type_to_bytes(a_dtype);
+  const double bytes_b = data_type_to_bytes(b_dtype);
+  const size_t raw = static_cast<size_t>(
+      (mt.mk() * bytes_a + mt.nk() * bytes_b) * num_stages);
+  if (raw > hardware.lds_capacity) return false;
   return estimate_triton_lds_bytes(mt, a_dtype, b_dtype, num_stages) <= hardware.lds_capacity;
 }
 
@@ -1948,7 +1987,6 @@ double compute_total_latency(const problem_t& problem,
   // 0) Short-circuit
   // We don't need to compute latency for all MTs. With this, we can shortcut.
   bool shortCircuit = true;
-  const bool is_triton = (config.target == target_t::triton);
 
   if (shortCircuit) {
     // When problem dimensions are small enough that we can fit them in one tile, we should do
@@ -1958,12 +1996,10 @@ double compute_total_latency(const problem_t& problem,
     if (M <= 256 && N <= 256 && K < 1024 && batch != 1 && (MT_M < M || MT_N < N))
       return std::numeric_limits<double>::max();
 
-    // Use Dot2 only for M < 3 — Triton doesn't use Dot2 MI, skip this gate
-    if (!is_triton && MI_M == 1 && MI_N == 1 && MI_K == 64 && M > 2)
+    if (MI_M == 1 && MI_N == 1 && MI_K == 64 && M > 2)
       return std::numeric_limits<double>::max();
 
-    // Cache-hints enforcement: Triton manages its own caching, skip nontemporal gating
-    if (!is_triton) {
+    {
       size_t K_mod_128bytes    = K * a_bits % 1024;
       size_t MT_K_mod_128bytes = MT_K * a_bits % 1024;
       if (K_mod_128bytes == 0 && MT_K_mod_128bytes == 0) {
@@ -1998,14 +2034,6 @@ double compute_total_latency(const problem_t& problem,
   //  4) Add parallel reduction kernel cost (separate kernel launch, 0 if not parallel)
   double L_parallel_reduce = compute_parallel_reduction_latency(problem, hardware, config, context);
   total_latency += L_parallel_reduce;
-
-  // 5) Triton near-square tile preference: 256x256x64 empirically outperforms
-  //    asymmetric 256xN or Mx256 tiles due to better wavefront utilization and
-  //    L2 reuse patterns in Triton's dispatch.  Apply a 5% latency discount so
-  //    it wins tie-breaks naturally in rank_configs().
-  if (is_triton && MT_M == 256 && MT_N == 256 && MT_K == 64) {
-    total_latency *= 0.95;
-  }
 
   if (context.debug) {
     OLOG_DEBUG("L_parallel_reduce: " << L_parallel_reduce);

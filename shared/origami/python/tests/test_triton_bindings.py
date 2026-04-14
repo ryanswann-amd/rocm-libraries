@@ -30,7 +30,35 @@ class TestTargetT:
 
 
 class TestTritonLDS:
-    """Tests for Triton LDS estimation functions."""
+    """Tests for Triton LDS estimation functions.
+
+    Uses the exact Python padded-encoding logic from tritonBLAS as the reference.
+    """
+
+    @staticmethod
+    def _padded_size_pow2(unpadded, interval, padding):
+        log2_i = (interval - 1).bit_length()
+        log2_p = (padding - 1).bit_length() if padding else 0
+        bp = (unpadded >> log2_i) << log2_p
+        if unpadded % interval == 0 and bp >= padding:
+            bp -= padding
+        return unpadded + bp
+
+    @classmethod
+    def _python_estimate(cls, bm, bn, bk, bytes_a, bytes_b, num_stages=2):
+        """Exact Python reference for estimate_triton_lds_bytes."""
+        elem_a, elem_b = bm * bk, bk * bn
+        pa = cls._padded_size_pow2(elem_a, 32, 4)
+        pb = cls._padded_size_pow2(elem_b, 32, 4)
+        if bk > 0 and (bk & (bk - 1)) == 0:
+            alt = cls._padded_size_pow2(elem_a, bk, 8)
+            if alt > pa:
+                pa = alt
+        if bn > 0 and (bn & (bn - 1)) == 0:
+            alt = cls._padded_size_pow2(elem_b, bn, 8)
+            if alt > pb:
+                pb = alt
+        return num_stages * int(pa * bytes_a + pb * bytes_b)
 
     @pytest.fixture
     def hw(self):
@@ -38,22 +66,18 @@ class TestTritonLDS:
 
     def test_estimate_triton_lds_bytes_2stage(self):
         mt = origami.dim3_t(128, 128, 32)
-        # fp16: A = 128*32*2 = 8192, B = 128*32*2 = 8192
-        # 2 stages: (2-1) * (8192 + 8192) = 16384
         result = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 2)
-        assert result == 16384
+        assert result == self._python_estimate(128, 128, 32, 2, 2, 2)
 
     def test_estimate_triton_lds_bytes_1stage(self):
         mt = origami.dim3_t(128, 128, 32)
-        # 1 stage: max(8192, 8192) = 8192
         result = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 1)
-        assert result == 8192
+        assert result == self._python_estimate(128, 128, 32, 2, 2, 1)
 
     def test_estimate_triton_lds_bytes_3stage(self):
         mt = origami.dim3_t(128, 128, 32)
-        # 3 stages: (3-1) * (8192 + 8192) = 32768
         result = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 3)
-        assert result == 32768
+        assert result == self._python_estimate(128, 128, 32, 2, 2, 3)
 
     def test_estimate_triton_lds_bytes_default_stages(self):
         mt = origami.dim3_t(256, 256, 64)
@@ -62,7 +86,7 @@ class TestTritonLDS:
         assert result_default == result_explicit
 
     def test_check_triton_lds_capacity_fits(self, hw):
-        mt = origami.dim3_t(128, 128, 32)
+        mt = origami.dim3_t(64, 64, 32)
         assert origami.check_triton_lds_capacity(hw, mt, origami.data_type_t.Half, origami.data_type_t.Half)
 
     def test_check_triton_lds_capacity_too_large(self, hw):
@@ -71,11 +95,27 @@ class TestTritonLDS:
 
     def test_triton_lds_vs_standard_lds(self, hw):
         mt = origami.dim3_t(128, 128, 32)
-        triton_bytes = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 2)
-        # Standard LDS: A_bytes + B_bytes = 8192 + 8192 = 16384
-        # Triton 2-stage also = 16384, but for larger stage counts it's bigger
-        triton_3stage = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 3)
-        assert triton_3stage > triton_bytes
+        triton_2 = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 2)
+        triton_3 = origami.estimate_triton_lds_bytes(mt, origami.data_type_t.Half, origami.data_type_t.Half, 3)
+        assert triton_3 > triton_2
+        # Padded encoding should be larger than raw tile size
+        raw = (128 * 32 * 2 + 32 * 128 * 2) * 2
+        assert triton_2 > raw
+
+    def test_estimate_matches_python_sweep(self):
+        """Sweep a range of tile sizes and verify C++ matches Python exactly."""
+        for bm in [16, 32, 64, 128, 256]:
+            for bn in [16, 32, 64, 128, 256]:
+                for bk in [16, 32, 64, 128, 256, 512]:
+                    for ns in [1, 2, 3]:
+                        mt = origami.dim3_t(bm, bn, bk)
+                        cpp = origami.estimate_triton_lds_bytes(
+                            mt, origami.data_type_t.Half, origami.data_type_t.Half, ns
+                        )
+                        py = self._python_estimate(bm, bn, bk, 2, 2, ns)
+                        assert cpp == py, (
+                            f"Mismatch at {bm}x{bn}x{bk} stages={ns}: C++={cpp} Python={py}"
+                        )
 
 
 class TestTritonWSParams:
