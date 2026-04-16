@@ -152,7 +152,13 @@ class hardware_t {
       case architecture_t::gfx942:
         return {8, 17, 1.21875121875121875122 * 6, 4, 4, std::make_tuple(0, 0.015, 0), 1.5};
       case architecture_t::gfx950:
-        return {8, 17, 1.21875121875121875122 * 7, 6, 4, std::make_tuple(0, 0.008, 0), 1.5};
+        // MI355X calibration (K-045, mi355x-thor-2, 2026-04-16):
+        //   compute_clock = 2.403 GHz (HIP runtime, verified)
+        //   mem_clock = 2000 MHz (rocm-smi, verified)
+        //   single-CU HBM store BW = 56.78 B/cyc @2.403 GHz (0.32% cross-run delta)
+        //   mem_bw_per_wg b coeff: 0.019 = 56.78 / (1e9 * 6 / 2e6)
+        //     Prior placeholder 0.008 was copied from gfx942 without calibration.
+        return {8, 17, 1.21875121875121875122 * 7, 6, 4, std::make_tuple(0, 0.019, 0), 1.5};
       case architecture_t::gfx1201:
         return {1, 5.74, 1.21875121875121875122 * 2.41, 0.464, 2, std::make_tuple(0, 0.17, 0), 1.5};
       case architecture_t::gfx1100:
