@@ -69,6 +69,32 @@ target_sources(
 
 target_link_libraries(origami PUBLIC roc::origami-headers)
 
+# ── origami::comm — analytical communication cost model ──────────────────────
+# Header-only INTERFACE library. Deliberately does NOT link hip::host: the comm
+# model is pure C++17 and usable without a ROCm toolchain, so consumers that only
+# need collective cost prediction can depend on it independently of roc::origami.
+add_library(origami-comm-headers INTERFACE)
+add_library(roc::origami-comm-headers ALIAS origami-comm-headers)
+
+target_compile_features(origami-comm-headers INTERFACE cxx_std_17)
+
+target_include_directories(
+    origami-comm-headers INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+                                   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+target_sources(
+    origami-comm-headers
+    INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/origami_comm.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/types.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/hardware.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/heuristics.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/primitives.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/layouts.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/latency.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/collective.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/tensor.hpp>
+)
+
 target_sources(
     origami
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/gemm.cpp"
@@ -94,12 +120,13 @@ if(ORIGAMI_BUILD_TESTING OR BUILD_TESTING)
 endif()
 
 if(ORIGAMI_ENABLE_INSTALL OR ORIGAMI_STANDALONE)
-    rocm_install(TARGETS origami origami-headers)
+    rocm_install(TARGETS origami origami-headers origami-comm-headers)
 
     rocm_export_targets(
         TARGETS
         roc::origami
         roc::origami-headers
+        roc::origami-comm-headers
         DEPENDS
         PACKAGE
         hip
