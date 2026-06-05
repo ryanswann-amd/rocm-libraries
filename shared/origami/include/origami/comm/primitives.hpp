@@ -27,7 +27,7 @@
 // origami::comm — analytical communication cost model
 //
 // Communication primitives — composable operations that map to functional
-// unit work. Mirrors origami_comms/model/primitives.py.
+// unit work.
 //
 // Each primitive's resolve() traces the full data path through the cache
 // hierarchy and returns functional_unit_work_t for one loop iteration
@@ -44,8 +44,8 @@
 namespace origami::comm {
 
 // ─── op_t argument bundle ─────────────────────────────────────────
-// Avoids 3 positional args at every call site and matches the
-// Python signature (cl_per_iter, instrs_per_cl, elements_per_iter).
+// Avoids 3 positional args at every call site
+// (cl_per_iter, instrs_per_cl, elements_per_iter).
 struct resolve_args_t {
   int cl_per_iter;
   int instrs_per_cl;
@@ -154,8 +154,6 @@ using op_t = std::variant<load_t, store_t, pull_t, push_t, reduce_t, signal_t, w
 // (`sync_work`) functional_unit_work_t totals. signal_t/wait_t are charged
 // once per iteration to `sync_work`; everything else accumulates
 // into `iter_work` (the inner-loop body).
-//
-// Mirrors model.latency.resolve_work_graph in Python.
 struct resolved_work_t {
   functional_unit_work_t iter_work;
   functional_unit_work_t sync_work;
@@ -180,7 +178,7 @@ inline resolved_work_t resolve_work_graph(const std::vector<op_t>& ops,
   return out;
 }
 
-// Convenience overload (positional args matching Python signature).
+// Convenience overload (positional args).
 inline resolved_work_t resolve_work_graph(const std::vector<op_t>& ops,
                                           int cl_per_iter,
                                           int instrs_per_cl,

@@ -27,7 +27,6 @@
 // origami::comm — analytical communication cost model
 //
 // wg_tile latency computation. All times are in **GPU cycles**.
-// Mirrors origami_comms/model/latency.py 1:1.
 //
 //     T_total = T_prologue + (num_iters - 1) × T_wlt + T_epilogue + T_sync
 //
@@ -51,9 +50,8 @@
 namespace origami::comm {
 
 // ─── iter_times_t: per-FU one-iteration cycle counts ───────────────
-// Named fields instead of a string-keyed dict — matches Python's
-// returned dict semantically; the bottleneck() helper resolves the
-// FU with the max cycle count to a stable string.
+// Named fields (rather than a string-keyed map); the bottleneck()
+// helper resolves the FU with the max cycle count to a stable string.
 struct iter_times_t {
   double vmem       = 0.0;
   double tcp        = 0.0;
@@ -69,7 +67,7 @@ struct iter_times_t {
     return std::max({vmem, tcp, l2, mall, hbm_read, hbm_write, xgmi_read, xgmi_write, valu});
   }
 
-  // The FU name with the largest cycle count. Names match Python dict keys.
+  // The FU name with the largest cycle count.
   constexpr std::string_view bottleneck() const noexcept {
     double best_v           = vmem;
     std::string_view best_k = "vmem";

@@ -26,7 +26,7 @@
 
 // origami::comm — analytical communication cost model
 //
-// Type definitions mirroring origami_comms/model/types.py 1:1.
+// Core type definitions for the communication cost model.
 // Header-only; constexpr where possible.
 #pragma once
 
@@ -85,7 +85,7 @@ constexpr int instrs_per_cacheline(load_width_t w) noexcept {
 enum class direction_t : std::uint8_t { PUSH, PULL };
 enum class reduce_op_t : std::uint8_t { SUM, MAX, MIN, PROD };
 
-// ─── ceil_div: matches Python's ceil(a/b) for positive ints ─────
+// ─── ceil_div: ceil(a/b) for positive integers ─────
 template <typename A, typename B>
 constexpr auto ceil_div(A a, B b) noexcept -> std::common_type_t<A, B> {
   using U = std::common_type_t<A, B>;
@@ -94,8 +94,8 @@ constexpr auto ceil_div(A a, B b) noexcept -> std::common_type_t<A, B> {
 
 // ─── tile_shape_t ───────────────────────────────────────────────────
 // A 2D row-major tile (m × n × dtype) with a contiguity bit.
-// See Python types.py docstring for the contiguous/non-contiguous
-// regimes and what they cost.
+// The contiguous/non-contiguous regimes and their costs are described
+// on the member accessors below.
 struct tile_shape_t {
   std::size_t m     = 1;
   std::size_t n     = 1;
@@ -310,7 +310,7 @@ struct wg_tile_latency_breakdown_t {
 
   constexpr double cycles_to_ns(double cycles) const noexcept { return cycles / clock_hz() * 1e9; }
 
-  // ns accessors — match Python's `T_*` legacy properties exactly.
+  // ns accessors for display; the *_cycles fields are the source of truth.
   constexpr double T_total() const noexcept { return cycles_to_ns(T_total_cycles); }
   constexpr double T_wlt() const noexcept { return cycles_to_ns(T_wlt_cycles); }
   constexpr double T_prologue() const noexcept { return cycles_to_ns(T_prologue_cycles); }

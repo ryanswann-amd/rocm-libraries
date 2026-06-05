@@ -24,12 +24,11 @@
  *
  *******************************************************************************/
 
-// M9 foundation: every constant we expose must equal the Python reference
-// to within machine epsilon. These reference values were captured directly
-// from Python `repr()` so the gold values *are* the IEEE-754 doubles the
-// Python model produces. Tolerance is 0 (==) where the Python value is an
-// exact integer reciprocal of an integer; 1e-12 otherwise to absorb
-// last-bit reordering in the C++ constant-folder.
+// Every exposed constant must equal the reference value to within machine
+// epsilon. These reference values are stored at full precision so the gold
+// values *are* the exact IEEE-754 doubles expected. Tolerance is 0 (==)
+// where the value is an exact integer reciprocal of an integer; 1e-12
+// otherwise to absorb last-bit reordering in the C++ constant-folder.
 #include "test_harness.hpp"
 
 #include "origami/comm/hardware.hpp"
@@ -47,7 +46,7 @@ TEST(byteid_mi300x_die_structure) {
 
 TEST(byteid_mi300x_per_cu_rates) {
   CHECK_NEAR(MI300X.vmem_issue_rate, 1.0, 0.0);
-  CHECK_NEAR(MI300X.valu_rate, 2.10 * 64, 1e-12);  // Python: 134.4
+  CHECK_NEAR(MI300X.valu_rate, 2.10 * 64, 1e-12);  // = 134.4
   CHECK_NEAR(MI300X.tcp_bw, 64.0, 0.0);
 }
 
@@ -68,7 +67,7 @@ TEST(byteid_mi300x_bandwidths) {
 }
 
 TEST(byteid_mi300x_comm_link_bw) {
-  // Python: 49.1 * (1024**3) / 1e9 / 1.23 / 2.0 = 21.431188438373987
+  // 49.1 * (1024**3) / 1e9 / 1.23 / 2.0 = 21.431188438373987
   CHECK_NEAR(MI300X_COMM.link_bw, 21.431188438373987, 1e-15);
 }
 

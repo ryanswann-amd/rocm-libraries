@@ -27,12 +27,11 @@
 // origami::comm — analytical communication cost model
 //
 // Collective layouts: (pid, timestep) → link.
-// Mirrors origami_comms/model/layouts.py 1:1.
 //
 // Each layout is a closed-form function derived from actual Iris/RCCL
-// kernel loop structures. The interface is polymorphic (virtual) — same
-// shape as the Python base class. Layout objects are constructed once
-// per collective call, so virtual dispatch overhead is negligible.
+// kernel loop structures. The interface is polymorphic (virtual). Layout
+// objects are constructed once per collective call, so virtual dispatch
+// overhead is negligible.
 //
 // Self-timestep distinction: when a timestep maps to my_rank the work
 // graph uses load_t (local HBM) instead of pull_t (xGMI). Self-timesteps
@@ -61,12 +60,12 @@ struct schedule_entry_t {
   bool is_self = false;
 };
 
-// Work-graph closure. Mirrors Python `work_graph_fn(peer, my_rank, num_gpus, is_self) -> [op_t]`.
+// Work-graph closure: (peer, my_rank, num_gpus, is_self) -> [op_t].
 using work_graph_fn_t =
     std::function<std::vector<op_t>(int peer, int my_rank, int num_gpus, bool is_self)>;
 
-// Python-style modulo: always returns a value in [0, n).
-constexpr int py_mod(int a, int n) noexcept {
+// Floored modulo: always returns a value in [0, n).
+constexpr int floor_mod(int a, int n) noexcept {
   const int r = a % n;
   return (r < 0) ? r + n : r;
 }
@@ -87,8 +86,8 @@ class collective_layout_t {
   // algorithms override (ring, two-shot, a2a → N).
   virtual int chunks_per_timestep() const { return 1; }
 
-  // Layout-kind queries — match the two checks the collective engine
-  // makes against Python's RING_LAYOUT_CLASSES / _is_ring_layout.
+  // Layout-kind queries — the two checks the collective engine makes
+  // to identify ring-class layouts.
   //
   //   is_ring_class()    — eligible for per-step proxy/sync overhead
   //                        heuristic. Covers AG, RS, ring AR, ring fixed.
@@ -110,7 +109,7 @@ class all_to_same_layout_t : public collective_layout_t {
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
   schedule_entry_t link_of(int /*pid*/, int timestep, int my_rank, int num_gpus) const override {
-    const int peer     = py_mod(my_rank + timestep + 1, num_gpus);
+    const int peer     = floor_mod(my_rank + timestep + 1, num_gpus);
     const bool is_self = (peer == my_rank);
     auto work          = wg_fn_(peer, my_rank, num_gpus, is_self);
     return {is_self ? SELF_LINK : peer, peer, direction_t::PULL, std::move(work), is_self};
@@ -150,9 +149,9 @@ class pid_staggered_layout_t : public collective_layout_t {
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
   schedule_entry_t link_of(int pid, int timestep, int my_rank, int num_gpus) const override {
-    const int start    = py_mod(pid, num_gpus);
-    const int peer_idx = py_mod(start + timestep, num_gpus);
-    const int peer     = py_mod(my_rank + peer_idx, num_gpus);
+    const int start    = floor_mod(pid, num_gpus);
+    const int peer_idx = floor_mod(start + timestep, num_gpus);
+    const int peer     = floor_mod(my_rank + peer_idx, num_gpus);
     const bool is_self = (peer == my_rank);
     auto work          = wg_fn_(peer, my_rank, num_gpus, is_self);
     return {is_self ? SELF_LINK : peer, peer, direction_t::PULL, std::move(work), is_self};
@@ -199,8 +198,8 @@ class pid_partitioned_layout_t : public collective_layout_t {
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
   schedule_entry_t link_of(int pid, int /*timestep*/, int my_rank, int num_gpus) const override {
-    const int dest     = py_mod(pid, num_gpus);
-    const int peer     = py_mod(my_rank + dest, num_gpus);
+    const int dest     = floor_mod(pid, num_gpus);
+    const int peer     = floor_mod(my_rank + dest, num_gpus);
     const bool is_self = (peer == my_rank);
     auto work          = wg_fn_(peer, my_rank, num_gpus, is_self);
     return {is_self ? SELF_LINK : peer, peer, direction_t::PUSH, std::move(work), is_self};
@@ -262,7 +261,7 @@ class ring_fixed_layout_t : public collective_layout_t {
                            int /*timestep*/,
                            int my_rank,
                            int num_gpus) const override {
-    const int next_rank = py_mod(my_rank + 1, num_gpus);
+    const int next_rank = floor_mod(my_rank + 1, num_gpus);
     auto work           = wg_fn_(next_rank, my_rank, num_gpus, false);
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
@@ -287,8 +286,8 @@ class ring_fixed_layout_t : public collective_layout_t {
                                               int my_rank,
                                               int num_gpus,
                                               bool /*is_self*/) {
-    const int next_rank = py_mod(my_rank + 1, num_gpus);
-    const int prev_rank = py_mod(my_rank - 1, num_gpus);
+    const int next_rank = floor_mod(my_rank + 1, num_gpus);
+    const int prev_rank = floor_mod(my_rank - 1, num_gpus);
     return {
         load_t{}, wait_t{prev_rank}, pull_t{prev_rank}, reduce_t{}, store_t{}, signal_t{next_rank}};
   }
@@ -307,7 +306,7 @@ class ring_all_gather_layout_t : public collective_layout_t {
                            int /*timestep*/,
                            int my_rank,
                            int num_gpus) const override {
-    const int next_rank    = py_mod(my_rank + 1, num_gpus);
+    const int next_rank    = floor_mod(my_rank + 1, num_gpus);
     std::vector<op_t> work = {load_t{}, store_t{}, push_t{next_rank}};
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
@@ -341,7 +340,7 @@ class ring_reduce_scatter_layout_t : public collective_layout_t {
                            int /*timestep*/,
                            int my_rank,
                            int num_gpus) const override {
-    const int next_rank    = py_mod(my_rank + 1, num_gpus);
+    const int next_rank    = floor_mod(my_rank + 1, num_gpus);
     std::vector<op_t> work = {load_t{}, reduce_t{}, store_t{}, push_t{next_rank}};
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
@@ -372,10 +371,10 @@ class two_shot_all_reduce_layout_t : public collective_layout_t {
 
   schedule_entry_t link_of(int pid, int timestep, int my_rank, int num_gpus) const override {
     const int N     = num_gpus;
-    const int start = py_mod(pid, N);
+    const int start = floor_mod(pid, N);
     if (is_reduce_phase_(timestep)) {
-      const int peer_idx     = py_mod(start + timestep, N);
-      const int peer         = py_mod(my_rank + peer_idx, N);
+      const int peer_idx     = floor_mod(start + timestep, N);
+      const int peer         = floor_mod(my_rank + peer_idx, N);
       const bool is_self     = (peer == my_rank);
       std::vector<op_t> work = is_self ? std::vector<op_t>{load_t{}, reduce_t{}}
                                        : std::vector<op_t>{pull_t{peer}, reduce_t{}};
@@ -383,8 +382,8 @@ class two_shot_all_reduce_layout_t : public collective_layout_t {
     }
     // Broadcast phase. Skip self in peer ordering.
     const int bcast_idx    = timestep - N;
-    const int peer_offset  = py_mod(start + bcast_idx, N - 1) + 1;
-    const int peer         = py_mod(my_rank + peer_offset, N);
+    const int peer_offset  = floor_mod(start + bcast_idx, N - 1) + 1;
+    const int peer         = floor_mod(my_rank + peer_offset, N);
     std::vector<op_t> work = {load_t{}, push_t{peer}};
     return {peer, peer, direction_t::PUSH, std::move(work), false};
   }
@@ -423,8 +422,8 @@ class ring_all_reduce_layout_t : public collective_layout_t {
   explicit ring_all_reduce_layout_t(int num_gpus) : num_gpus_{num_gpus} {}
 
   schedule_entry_t link_of(int /*pid*/, int timestep, int my_rank, int num_gpus) const override {
-    const int next_rank = py_mod(my_rank + 1, num_gpus);
-    const int prev_rank = py_mod(my_rank - 1, num_gpus);
+    const int next_rank = floor_mod(my_rank + 1, num_gpus);
+    const int prev_rank = floor_mod(my_rank - 1, num_gpus);
     const int rs_visits = num_gpus - 1;
 
     std::vector<op_t> work;
@@ -470,7 +469,7 @@ class ring_broadcast_layout_t : public collective_layout_t {
                            int /*timestep*/,
                            int my_rank,
                            int num_gpus) const override {
-    const int next_rank    = py_mod(my_rank + 1, num_gpus);
+    const int next_rank    = floor_mod(my_rank + 1, num_gpus);
     std::vector<op_t> work = {load_t{}, store_t{}, push_t{next_rank}};
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
@@ -493,7 +492,7 @@ class ring_broadcast_layout_t : public collective_layout_t {
 };
 
 // ─── Standard collective constructors ───────────────────────────
-// Mirror the Python free-function builders.
+// Free-function layout builders.
 
 inline std::unique_ptr<collective_layout_t> allgather_layout(int num_gpus) {
   return std::make_unique<ring_all_gather_layout_t>(num_gpus);

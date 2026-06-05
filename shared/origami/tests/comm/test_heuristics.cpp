@@ -30,7 +30,7 @@
 
 using namespace origami::comm;
 
-// ─── Defaults match Python ──────────────────────────────────────
+// ─── Default heuristic values ───────────────────────────────────
 TEST(default_heuristics_min_bytes_per_wg) { CHECK(DEFAULT_HEURISTICS.min_bytes_per_wg == 16'384); }
 
 TEST(default_heuristics_xgmi_k_default) {
@@ -56,7 +56,7 @@ TEST(default_heuristics_xgmi_k_by_primitive_string) {
 }
 
 TEST(default_heuristics_ring_step_overhead_cycles) {
-  // Python: AG = 10000 ns × 2 GHz = 20000 cycles.
+  // AG = 10000 ns × 2 GHz = 20000 cycles.
   CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::all_gather), 20000.0, 1e-9);
   CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::reduce_scatter), 8000.0, 1e-9);
   CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::broadcast), 0.0, 1e-9);

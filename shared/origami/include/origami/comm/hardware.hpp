@@ -30,8 +30,6 @@
 // are in **GPU cycles**; rates are in **per-cycle** units. The conversion
 // to seconds happens once at the public API boundary (predict_row in
 // collective.hpp).
-//
-// Source-of-truth Python: model/hardware.py. Constants documented there.
 #pragma once
 
 #include <algorithm>
@@ -177,8 +175,8 @@ struct comm_hardware_t {
 };
 
 // ─── MI300X (CDNA3, gfx942) ──────────────────────────────────────
-// Sourced from origami_comms/model/hardware.py — see that file's
-// commentary for the architectural references.
+// Constants are derived from the MI300X (CDNA3) architecture; see the
+// per-field commentary below for the relevant references.
 inline constexpr double _MI300X_CLOCK_GHZ = 2.0;
 
 inline constexpr hardware_t MI300X = {

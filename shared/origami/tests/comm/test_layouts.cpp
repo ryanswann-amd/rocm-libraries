@@ -24,8 +24,8 @@
  *
  *******************************************************************************/
 
-// Byte-identical with Python model/layouts.py. The harness loads
-// golden/layouts_grid.csv (dumped from Python) and verifies every
+// Layout byte-identity regression. The harness loads
+// golden/layouts_grid.csv (the frozen reference oracle) and verifies every
 // schedule_entry_t across 5,936 (layout, num_gpus, pid, timestep, my_rank)
 // tuples matches the C++ layout's link_of() exactly.
 //
@@ -33,8 +33,8 @@
 //   layout,num_gpus,pid,timestep,my_rank,link_id,peer_rank,direction,
 //   is_self,wg_sig
 //
-// `wg_sig` is a compact opcode chain like "L|X3|R" produced by the
-// Python dumper; we recompute the same signature from the C++
+// `wg_sig` is a compact opcode chain like "L|X3|R" stored in the golden
+// CSV; we recompute the same signature from the C++
 // schedule_entry_t::work_graph and string-compare.
 #include "test_harness.hpp"
 
@@ -53,7 +53,7 @@ using namespace origami::comm;
 
 namespace {
 
-// ─── op_sig: mirrors the Python dumper exactly ──────────────────
+// ─── op_sig: encodes a work-graph op as a compact token ─────────
 std::string op_sig(const op_t& op) {
   return std::visit(
       [](const auto& concrete) -> std::string {
@@ -116,7 +116,7 @@ std::vector<std::string> split_csv(const std::string& line) {
 }  // namespace
 
 // ─── Test: load CSV and compare every row ───────────────────────
-TEST(layouts_match_python_grid) {
+TEST(layouts_match_golden_grid) {
   const char* path = "golden/layouts_grid.csv";  // run from build/tests/
   std::ifstream in{path};
   if (!in) {
@@ -183,7 +183,7 @@ TEST(layouts_match_python_grid) {
 }
 
 // ─── Spot-checks on chunks_per_timestep + num_timesteps ─────────
-TEST(layout_num_timesteps_matches_python) {
+TEST(layout_num_timesteps_matches_reference) {
   // RingAllGather: N-1
   CHECK(allgather_layout(8)->num_timesteps() == 7);
   CHECK(reduce_scatter_layout(8)->num_timesteps() == 7);
@@ -201,7 +201,7 @@ TEST(layout_num_timesteps_matches_python) {
   CHECK(pp.num_timesteps() == 1);
 }
 
-TEST(layout_chunks_per_timestep_matches_python) {
+TEST(layout_chunks_per_timestep_matches_reference) {
   CHECK(allgather_layout(8)->chunks_per_timestep() == 1);
   CHECK(reduce_scatter_layout(8)->chunks_per_timestep() == 1);
   CHECK(broadcast_layout(8)->chunks_per_timestep() == 8);
@@ -226,13 +226,13 @@ TEST(ring_active_links_conserves_num_wgs) {
   }
 }
 
-// ─── py_mod sanity ──────────────────────────────────────────────
-TEST(py_mod_handles_negatives) {
-  CHECK(py_mod(0, 8) == 0);
-  CHECK(py_mod(-1, 8) == 7);
-  CHECK(py_mod(-9, 8) == 7);
-  CHECK(py_mod(7, 8) == 7);
-  CHECK(py_mod(8, 8) == 0);
+// ─── floor_mod sanity ──────────────────────────────────────────────
+TEST(floor_mod_handles_negatives) {
+  CHECK(floor_mod(0, 8) == 0);
+  CHECK(floor_mod(-1, 8) == 7);
+  CHECK(floor_mod(-9, 8) == 7);
+  CHECK(floor_mod(7, 8) == 7);
+  CHECK(floor_mod(8, 8) == 0);
 }
 
 ORIGAMI_TEST_MAIN()

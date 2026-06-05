@@ -74,7 +74,7 @@ bool open_golden(std::ifstream& in, const char* relpath) {
 }  // namespace
 
 // ─── compute_collective_latency grid (cycles) ───────────────────
-TEST(collective_latency_match_python_grid) {
+TEST(collective_latency_match_golden_grid) {
   std::ifstream in;
   CHECK(open_golden(in, "golden/collective_grid.csv"));
   if (!in.is_open()) return;
@@ -133,7 +133,7 @@ TEST(collective_latency_match_python_grid) {
 }
 
 // ─── predict_row grid (µs) ──────────────────────────────────────
-TEST(predict_row_match_python_grid) {
+TEST(predict_row_match_golden_grid) {
   std::ifstream in;
   CHECK(open_golden(in, "golden/predict_row.csv"));
   if (!in.is_open()) return;

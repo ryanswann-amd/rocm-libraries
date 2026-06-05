@@ -24,7 +24,7 @@
  *
  *******************************************************************************/
 
-// predict_tensor_collective byte-identity with Python.
+// predict_tensor_collective byte-identity regression against the golden corpus.
 //
 // Grid: 5 ops × 4 shapes × 2 dtypes × 4 world_sizes × 3 nchannels × 2 frameworks
 //       × 2 dims = 1,920 rows.
@@ -65,7 +65,7 @@ std::vector<std::size_t> parse_shape(const std::string& s) {
 
 }  // namespace
 
-TEST(predict_tensor_collective_match_python_grid) {
+TEST(predict_tensor_collective_match_golden_grid) {
   std::ifstream in{"golden/tensor_collective.csv"};
   if (!in.is_open()) in.open("../../tests/golden/tensor_collective.csv");
   CHECK(in.is_open());

@@ -27,7 +27,6 @@
 // origami::comm — analytical communication cost model
 //
 // Tensor Collective layer — shape-aware frontend over predict_row.
-// Mirrors origami_comms/model/tensor_collective.py 1:1.
 //
 // Top of the three-layer architecture:
 //
@@ -269,7 +268,7 @@ inline tensor_collective_prediction_t predict_tensor_collective(
   return out;
 }
 
-// String-dtype overload (matches Python's accept-string convenience).
+// String-dtype convenience overload.
 inline tensor_collective_prediction_t predict_tensor_collective(
     std::string_view op,
     const std::vector<std::size_t>& input_shape,

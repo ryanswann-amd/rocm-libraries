@@ -32,7 +32,7 @@
 
 using namespace origami::comm;
 
-// ─── Compile-time MI300X identity (mirror Python constants) ─────
+// ─── Compile-time MI300X identity (reference constants) ─────────
 TEST(mi300x_structural_constants) {
   static_assert(MI300X.num_cu == 304);
   static_assert(MI300X.num_xcd == 8);
@@ -103,8 +103,8 @@ TEST(mi300x_comm_atomic_and_launch) {
   CHECK_NEAR(MI300X_COMM.launch_overhead_cycles, 90000.0, 1e-9);
 }
 
-TEST(mi300x_comm_link_bw_matches_python) {
-  // Python: link_bw = 49.1 * (1024**3) / 1e9 / 1.23 / 2.0
+TEST(mi300x_comm_link_bw_matches_reference) {
+  // link_bw = 49.1 * (1024**3) / 1e9 / 1.23 / 2.0
   //                 ≈ 49.1 GiB/s / 1.23 / 2 GHz ≈ 21.43 B/cycle.
   const double expected = 49.1 * (1024.0 * 1024.0 * 1024.0) / 1e9 / 1.23 / 2.0;
   CHECK_NEAR(MI300X_COMM.link_bw, expected, 1e-12);

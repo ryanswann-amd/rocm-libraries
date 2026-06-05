@@ -31,7 +31,7 @@
 using namespace origami::comm;
 
 // ─── ceil_div ───────────────────────────────────────────────────
-TEST(ceil_div_matches_python) {
+TEST(ceil_div_matches_reference) {
   CHECK(ceil_div(0, 1) == 0);
   CHECK(ceil_div(1, 1) == 1);
   CHECK(ceil_div(7, 4) == 2);
@@ -41,7 +41,7 @@ TEST(ceil_div_matches_python) {
 }
 
 // ─── dtype_bytes ─────────────────────────────────────────────────
-TEST(dtype_bytes_matches_python) {
+TEST(dtype_bytes_matches_reference) {
   CHECK(dtype_bytes(data_type_t::Float8) == 1);
   CHECK(dtype_bytes(data_type_t::Int8) == 1);
   CHECK(dtype_bytes(data_type_t::Half) == 2);

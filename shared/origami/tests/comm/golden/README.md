@@ -1,7 +1,7 @@
 # Golden values
 
-Reference outputs captured from the Python `origami_comms` model.
-The C++ port asserts byte-identity against these.
+Frozen reference outputs for the `origami::comm` cost model. The byte-identity
+test suite asserts that the C++ model reproduces these values exactly.
 
 ## `layouts_grid.csv`
 
@@ -38,10 +38,7 @@ W<peer>   Wait(peer)
 
 ## Regenerating
 
-```bash
-# from origami_comms/ root (Python model on PYTHONPATH)
-python3 origami_comms_cpp/scripts/dump_golden.py
-```
-
-Or — the inline one-shot used during M4 development — `python3` with
-the dump script embedded; see git log for `M4: layouts` commit.
+These CSVs are a frozen oracle and should change only when the model is
+intentionally recalibrated. When that happens, regenerate them from the
+reference implementation and update the rows in lockstep with the model change
+so the byte-identity gate stays meaningful.

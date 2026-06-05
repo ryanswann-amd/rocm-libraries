@@ -26,7 +26,7 @@
 
 // origami::comm — analytical communication cost model
 //
-// Empirical heuristic weights. Mirrors origami_comms/model/heuristics.py 1:1.
+// Empirical heuristic weights.
 //
 // Distinguish from neighbors:
 //   hardware.hpp   — measured datasheet constants (facts about silicon)
@@ -42,7 +42,7 @@
 namespace origami::comm {
 
 // ─── primitive_t enum + name table ─────────────────────────────────
-// Maps directly onto the string keys used in Python heuristics dicts.
+// The canonical string keys for each primitive.
 enum class primitive_t : std::uint8_t {
   all_gather,
   reduce_scatter,
@@ -87,9 +87,9 @@ constexpr std::string_view framework_name(framework_t f) noexcept {
 }
 
 // ─── heuristics_t ──────────────────────────────────────────────────
-// The single home for empirical fudge factors. Defaults track the
-// Python `heuristics_t` dataclass; override per-study by constructing
-// a custom instance and passing it through `predict_tensor_collective`.
+// The single home for empirical fudge factors. Override per-study by
+// constructing a custom instance and passing it through
+// `predict_tensor_collective`.
 struct heuristics_t {
   // The MI300X clock used at C++ scope to convert the *_NS table
   // (host-meaningful units) into cycles (model-internal units). If
@@ -112,8 +112,8 @@ struct heuristics_t {
   };
 
   // ── Per-ring-step proxy/sync overhead (GPU cycles) ──────────
-  // Python defaults in ns: AG=10000, RS=4000, others=0. Stored
-  // directly in cycles using MI300X_CLOCK_GHZ.
+  // Defaults in ns: AG=10000, RS=4000, others=0. Stored directly in
+  // cycles using MI300X_CLOCK_GHZ.
   std::array<double, 5> ring_step_overhead_cycles = {
       /* all_gather     */ 10'000.0 * MI300X_CLOCK_GHZ,
       /* reduce_scatter */ 4'000.0 * MI300X_CLOCK_GHZ,
@@ -138,8 +138,7 @@ struct heuristics_t {
   }
 
   // String-keyed overload — used at the public API edge where the
-  // caller passes a name (matches Python dict lookup, falls back to
-  // default on unknown).
+  // caller passes a name (falls back to default on unknown).
   constexpr double k_xgmi_write(std::string_view name) const noexcept {
     for (std::size_t i = 0; i < PRIMITIVE_NAMES.size(); ++i) {
       if (PRIMITIVE_NAMES[i] == name) { return xgmi_write_concentration_k_by_primitive[i]; }

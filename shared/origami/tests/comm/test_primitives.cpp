@@ -24,10 +24,9 @@
  *
  *******************************************************************************/
 
-// Byte-identical to Python model/primitives.py. Each primitive's
-// resolve() is exercised at a fixed (cl_per_iter, instrs_per_cl,
-// elements_per_iter) triple and compared field-by-field against the
-// reference values dumped from Python.
+// Primitive work-resolution regression. Each primitive's resolve() is
+// exercised at a fixed (cl_per_iter, instrs_per_cl, elements_per_iter)
+// triple and compared field-by-field against the reference values.
 #include "test_harness.hpp"
 
 #include "origami/comm/primitives.hpp"
@@ -168,7 +167,7 @@ TEST(work_graph_empty_is_zero) {
 }
 
 TEST(work_graph_positional_overload) {
-  // Positional-args overload (matches Python call signature).
+  // Positional-args overload.
   std::vector<op_t> ops = {load_t{}};
   const auto resolved   = resolve_work_graph(ops,
                                              /*cl_per_iter=*/4,

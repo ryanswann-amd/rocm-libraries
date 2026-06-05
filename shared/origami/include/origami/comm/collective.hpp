@@ -26,7 +26,7 @@
 
 // origami::comm — analytical communication cost model
 //
-// End-to-end collective latency. Mirrors origami_comms/model/collective.py.
+// End-to-end collective latency.
 //
 // Two computation modes based on layout structure:
 //   1. Sequential timesteps: each timestep may use a different link;
@@ -64,7 +64,7 @@ inline double ring_step_overhead_cycles(std::string_view primitive,
 }
 
 // ─── default layout factory ─────────────────────────────────────
-// Mirrors Python COLLECTIVE_LAYOUTS dict.
+// Maps each collective name to its default layout.
 inline std::unique_ptr<collective_layout_t> default_layout_for(std::string_view collective,
                                                                int num_gpus) {
   if (collective == "all_gather") return allgather_layout(num_gpus);

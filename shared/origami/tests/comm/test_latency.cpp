@@ -24,7 +24,7 @@
  *
  *******************************************************************************/
 
-// Byte-identical with origami_comms/model/latency.py.
+// Latency-engine byte-identity regression.
 //
 // Two corpora:
 //   golden/iter_times.csv       (630 rows) -- compute_iter_times outputs
@@ -36,9 +36,9 @@
 //                                             graphs x 6 sizes x 4 num_wgs
 //                                             x 5 primitives.
 //
-// Tolerance: 1e-12 (absolute), which is the typical FP-reorder noise
-// floor between Python and C++ for these expressions. The Python values
-// are emitted via repr() so the gold IS the bit pattern Python produces.
+// Tolerance: 1e-12 (absolute), the typical FP-reorder noise floor for
+// these expressions. The golden values are stored at full precision so
+// the gold IS the exact bit pattern the reference produces.
 #include "test_harness.hpp"
 
 #include "origami/comm/hardware.hpp"
@@ -69,7 +69,7 @@ std::vector<std::string> split_csv(const std::string& line) {
   return out;
 }
 
-// Work-graph factory keyed by string (matches Python _example_work_graphs).
+// Work-graph factory keyed by string (matches the golden corpus' work graphs).
 std::vector<op_t> make_graph(const std::string& name) {
   if (name == "ag_step") return {load_t{}, store_t{}, push_t{/*peer=*/1}};
   if (name == "rs_step") return {load_t{}, reduce_t{}, store_t{}, push_t{/*peer=*/1}};
@@ -89,7 +89,7 @@ std::vector<op_t> make_graph(const std::string& name) {
   return {};
 }
 
-// functional_unit_work_t factory (must match _work_kinds in dump_golden.py).
+// functional_unit_work_t factory (must match the work kinds in the golden corpus).
 functional_unit_work_t make_work(const std::string& kind) {
   functional_unit_work_t w{};
   auto fill_full_read = [&] {
@@ -134,7 +134,7 @@ functional_unit_work_t make_work(const std::string& kind) {
 }  // namespace
 
 // ─── iter_times grid ────────────────────────────────────────────
-TEST(iter_times_match_python_grid) {
+TEST(iter_times_match_golden_grid) {
   std::ifstream in{"golden/iter_times.csv"};
   if (!in) in.open("../../tests/golden/iter_times.csv");
   CHECK(in.is_open());
@@ -203,7 +203,7 @@ TEST(iter_times_match_python_grid) {
 }
 
 // ─── wg_tile_latency grid ───────────────────────────────────────
-TEST(wg_tile_latency_match_python_grid) {
+TEST(wg_tile_latency_match_golden_grid) {
   std::ifstream in{"golden/wg_tile_latency.csv"};
   if (!in) in.open("../../tests/golden/wg_tile_latency.csv");
   CHECK(in.is_open());
