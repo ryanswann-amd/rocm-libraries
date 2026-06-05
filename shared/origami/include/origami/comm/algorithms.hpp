@@ -317,7 +317,13 @@ class ring_fixed_algorithm_t : public collective_algorithm_t {
     const int next_rank = floor_mod(my_rank + 1, num_gpus);
     const int prev_rank = floor_mod(my_rank - 1, num_gpus);
     return {
-        load_t{}, wait_t{prev_rank}, pull_t{prev_rank}, reduce_t{}, store_t{}, signal_t{next_rank}};
+        load_t{},
+        wait_t{prev_rank},
+        pull_t{prev_rank},
+        reduce_t{},
+        store_t{},
+        signal_t{next_rank},
+    };
   }
 
   int num_gpus_;
@@ -335,7 +341,11 @@ class ring_all_gather_algorithm_t : public collective_algorithm_t {
                            int my_rank,
                            int num_gpus) const override {
     const int next_rank    = floor_mod(my_rank + 1, num_gpus);
-    std::vector<op_t> work = {load_t{}, store_t{}, push_t{next_rank}};
+    std::vector<op_t> work = {
+        load_t{},
+        store_t{},
+        push_t{next_rank},
+    };
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
 
@@ -369,7 +379,12 @@ class ring_reduce_scatter_algorithm_t : public collective_algorithm_t {
                            int my_rank,
                            int num_gpus) const override {
     const int next_rank    = floor_mod(my_rank + 1, num_gpus);
-    std::vector<op_t> work = {load_t{}, reduce_t{}, store_t{}, push_t{next_rank}};
+    std::vector<op_t> work = {
+        load_t{},
+        reduce_t{},
+        store_t{},
+        push_t{next_rank},
+    };
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
 
@@ -417,7 +432,10 @@ class two_shot_all_reduce_algorithm_t : public collective_algorithm_t {
     const int bcast_idx    = timestep - N;
     const int peer_offset  = floor_mod(start + bcast_idx, N - 1) + 1;
     const int peer         = floor_mod(my_rank + peer_offset, N);
-    std::vector<op_t> work = {load_t{}, push_t{peer}};
+    std::vector<op_t> work = {
+        load_t{},
+        push_t{peer},
+    };
     return {peer, peer, direction_t::PUSH, std::move(work), false};
   }
 
@@ -467,14 +485,21 @@ class ring_all_reduce_algorithm_t : public collective_algorithm_t {
 
     std::vector<op_t> work;
     if (timestep < rs_visits) {
-      work = {load_t{},
-              wait_t{prev_rank},
-              pull_t{prev_rank},
-              reduce_t{},
-              store_t{},
-              signal_t{next_rank}};
+      work = {
+          load_t{},
+          wait_t{prev_rank},
+          pull_t{prev_rank},
+          reduce_t{},
+          store_t{},
+          signal_t{next_rank},
+      };
     } else {
-      work = {wait_t{prev_rank}, pull_t{prev_rank}, store_t{}, signal_t{next_rank}};
+      work = {
+          wait_t{prev_rank},
+          pull_t{prev_rank},
+          store_t{},
+          signal_t{next_rank},
+      };
     }
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
@@ -509,7 +534,11 @@ class ring_broadcast_algorithm_t : public collective_algorithm_t {
                            int my_rank,
                            int num_gpus) const override {
     const int next_rank    = floor_mod(my_rank + 1, num_gpus);
-    std::vector<op_t> work = {load_t{}, store_t{}, push_t{next_rank}};
+    std::vector<op_t> work = {
+        load_t{},
+        store_t{},
+        push_t{next_rank},
+    };
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
 
