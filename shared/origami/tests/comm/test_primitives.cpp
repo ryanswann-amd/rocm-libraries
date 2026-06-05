@@ -166,13 +166,10 @@ TEST(work_graph_empty_is_zero) {
   CHECK(resolved.sync_work.atomic_count == 0);
 }
 
-TEST(work_graph_positional_overload) {
-  // Positional-args overload.
+TEST(work_graph_resolves_from_iter_dims) {
   std::vector<op_t> ops = {load_t{}};
-  const auto resolved   = resolve_work_graph(ops,
-                                             /*cl_per_iter=*/4,
-                                             /*instrs_per_cl=*/4,
-                                             /*elements_per_iter=*/128);
+  const auto resolved   = resolve_work_graph(
+      ops, iter_dims_t{/*cl_per_iter=*/4, /*instrs_per_cl=*/4, /*elements_per_iter=*/128});
   CHECK(resolved.iter_work.vmem_read_instrs == 16);  // 4 × 4
   CHECK(resolved.iter_work.hbm_read_cl == 4);
 }

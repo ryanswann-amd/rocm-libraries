@@ -227,12 +227,4 @@ inline resolved_work_t resolve_work_graph(const std::vector<op_t>& ops,
   return out;
 }
 
-// Convenience overload (positional args).
-inline resolved_work_t resolve_work_graph(const std::vector<op_t>& ops,
-                                          int cl_per_iter,
-                                          int instrs_per_cl,
-                                          int elements_per_iter) noexcept {
-  return resolve_work_graph(ops, iter_dims_t{cl_per_iter, instrs_per_cl, elements_per_iter});
-}
-
 }  // namespace origami::comm

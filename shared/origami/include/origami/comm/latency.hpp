@@ -251,8 +251,8 @@ inline wg_tile_latency_breakdown_t compute_wg_tile_latency(
     const system_t& system,
     double bw_per_wg,
     std::size_t wg_tile_elements,
+    int active_cus,
     std::optional<tile_shape_t> wg_tile  = std::nullopt,
-    std::optional<int> active_cus_opt    = std::nullopt,
     const heuristics_t& heur             = DEFAULT_HEURISTICS,
     std::optional<primitive_t> primitive = std::nullopt) {
   const hardware_t& hw           = system.gpu;
@@ -268,7 +268,6 @@ inline wg_tile_latency_breakdown_t compute_wg_tile_latency(
       iter_dims_t{
           static_cast<int>(cl_per_iter), instrs_per_cl, static_cast<int>(elements_per_iter)});
 
-  const int active_cus = active_cus_opt.value_or(config.num_wgs);
   const iter_times_t times =
       compute_iter_times(resolved.iter_work, system, bw_per_wg, active_cus, heur, primitive);
 

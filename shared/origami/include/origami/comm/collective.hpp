@@ -85,11 +85,9 @@ inline double compute_ring_latency(const collective_algorithm_t& algorithm,
                                    const comm_config_t& config,
                                    const system_t& system,
                                    int my_rank,
-                                   const heuristics_t& heur,
-                                   primitive_t primitive) {
+                                   const heuristics_t& heur) {
   const hardware_t& hw           = system.gpu;
   const comm_hardware_t& comm_hw = system.fabric;
-  const int N                    = problem.num_gpus;
   const int num_timesteps        = algorithm.num_timesteps();
   const std::size_t CL           = CACHELINE_BYTES;
 
@@ -120,7 +118,7 @@ inline double compute_ring_latency(const collective_algorithm_t& algorithm,
   const double T_transfer = static_cast<double>(total_wire_bytes) / aggregate_bw;
 
   // Sync: count signal_t+wait_t ops in the work graph times atomic_latency_cycles.
-  const auto entry = algorithm.link_of(/*pid=*/0, /*timestep=*/0, my_rank, N);
+  const auto entry = algorithm.link_of(/*pid=*/0, /*timestep=*/0, my_rank);
   int sync_ops     = 0;
   for (const auto& op : entry.work_graph) {
     std::visit(
@@ -144,8 +142,8 @@ inline double compute_ring_latency(const collective_algorithm_t& algorithm,
   const double T_transfer_total = std::max(T_transfer, T_hbm);
 
   // Per-step proxy/handshake overhead the bandwidth model cannot see (CPU-
-  // mediated; empirical, from heuristics).
-  const double T_step_overhead = ring_step_overhead_cycles(primitive, algorithm, heur);
+  // mediated; empirical, from heuristics). Keyed by the collective being run.
+  const double T_step_overhead = ring_step_overhead_cycles(problem.collective, algorithm, heur);
 
   // Fixed launch floor + the throughput-bound transfer + serial sync + per-step
   // overhead. Launch dominates tiny messages; transfer dominates large ones.
@@ -158,12 +156,14 @@ inline double compute_sequential_latency(const collective_algorithm_t& algorithm
                                          const comm_config_t& config,
                                          const system_t& system,
                                          int my_rank,
-                                         const heuristics_t& heur,
-                                         primitive_t primitive) {
+                                         const heuristics_t& heur) {
   const hardware_t& hw           = system.gpu;
   const comm_hardware_t& comm_hw = system.fabric;
-  const int N                    = problem.num_gpus;
   const int chunks_per_timestep  = algorithm.chunks_per_timestep();
+  // The collective being implemented; threaded down to the per-tile heuristics
+  // (k_xgmi_write / ring_step_overhead) which take only the primitive, not the
+  // full problem.
+  const primitive_t primitive = problem.collective;
 
   const tile_shape_t gpu_tile = problem.gpu_tile_shape();
   const tile_shape_t gpu_timestep_tile =
@@ -181,47 +181,45 @@ inline double compute_sequential_latency(const collective_algorithm_t& algorithm
   // *slowest* link, not their sum (T_link_max below).
   double T_timesteps = 0.0;
   for (int timestep = 0; timestep < algorithm.num_timesteps(); ++timestep) {
-    const auto entry = algorithm.link_of(/*pid=*/0, timestep, my_rank, N);
+    const auto entry = algorithm.link_of(/*pid=*/0, timestep, my_rank);
 
     if (entry.is_self) {
       // A "self" step is a local copy (no peer): bound by local HBM, so the
       // per-WG budget is the HBM per-CU share rather than a link share.
       const double bw_per_wg = hw.hbm_read_bw_per_cu(eff_wgs);
-      const auto breakdown =
-          compute_wg_tile_latency(entry.work_graph,
-                                  wg_tile_cachelines,
-                                  config,
-                                  system,
-                                  bw_per_wg,
-                                  wg_tile_elements,
-                                  /*wg_tile=*/std::optional<tile_shape_t>{wg_tile},
-                                  /*active_cus=*/std::optional<int>{eff_wgs},
-                                  heur,
-                                  primitive);
+      const auto breakdown   = compute_wg_tile_latency(entry.work_graph,
+                                                       wg_tile_cachelines,
+                                                       config,
+                                                       system,
+                                                       bw_per_wg,
+                                                       wg_tile_elements,
+                                                       /*active_cus=*/eff_wgs,
+                                                       /*wg_tile=*/wg_tile,
+                                                       heur,
+                                                       primitive);
       T_timesteps += breakdown.T_total_cycles;
     } else {
       // A remote step may light up several links at once; active_links reports
       // how the eff_wgs workgroups are distributed over them. Each link's WGs
       // share that link's width evenly, and the timestep waits for the most
       // congested link to finish — hence the max over links.
-      const auto link_wg_counts = algorithm.active_links(timestep, eff_wgs, N);
+      const auto link_wg_counts = algorithm.active_links(timestep, eff_wgs);
 
       double T_link_max = 0.0;
       for (const auto& [link_id, wgs_on_link] : link_wg_counts) {
         const double bw_per_wg = comm_hw.link_bw / static_cast<double>(std::max(wgs_on_link, 1));
 
-        const auto breakdown =
-            compute_wg_tile_latency(entry.work_graph,
-                                    wg_tile_cachelines,
-                                    config,
-                                    system,
-                                    bw_per_wg,
-                                    wg_tile_elements,
-                                    /*wg_tile=*/std::optional<tile_shape_t>{wg_tile},
-                                    /*active_cus=*/std::optional<int>{eff_wgs},
-                                    heur,
-                                    primitive);
-        T_link_max = std::max(T_link_max, breakdown.T_total_cycles);
+        const auto breakdown = compute_wg_tile_latency(entry.work_graph,
+                                                       wg_tile_cachelines,
+                                                       config,
+                                                       system,
+                                                       bw_per_wg,
+                                                       wg_tile_elements,
+                                                       /*active_cus=*/eff_wgs,
+                                                       /*wg_tile=*/wg_tile,
+                                                       heur,
+                                                       primitive);
+        T_link_max           = std::max(T_link_max, breakdown.T_total_cycles);
       }
       T_timesteps += T_link_max;
     }
@@ -250,14 +248,14 @@ inline double compute_collective_latency_for_rank(const comm_problem_t& problem,
   std::unique_ptr<collective_algorithm_t> owned;
   const collective_algorithm_t* A = config.algorithm_override;
   if (!A) {
-    owned = resolve_algorithm(problem.collective, config.algorithm, problem.num_gpus);
+    owned = resolve_algorithm(problem, config);
     A     = owned.get();
   }
 
   if (A->is_ring_pipeline()) {
-    return compute_ring_latency(*A, problem, config, system, my_rank, heur, problem.collective);
+    return compute_ring_latency(*A, problem, config, system, my_rank, heur);
   }
-  return compute_sequential_latency(*A, problem, config, system, my_rank, heur, problem.collective);
+  return compute_sequential_latency(*A, problem, config, system, my_rank, heur);
 }
 
 // ─── compute_collective_latency ─────────────────────────────────

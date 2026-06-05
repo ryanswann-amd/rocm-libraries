@@ -147,7 +147,7 @@ TEST(algorithms_match_golden_grid) {
     const std::string exp_sig   = f[9];
 
     const auto& L = cached_algorithm(algorithm, num_gpus);
-    const auto se = L.link_of(pid, timestep, my_rank, num_gpus);
+    const auto se = L.link_of(pid, timestep, my_rank);
 
     ++rows;
     const std::string got_sig = wg_sig(se.work_graph);
@@ -218,7 +218,7 @@ TEST(ring_active_links_conserves_num_wgs) {
   for (int N : {2, 4, 8}) {
     for (int nch : {1, 2, 3, 7, 8, 16, 32}) {
       auto L  = allgather_algorithm(N);
-      auto al = L->active_links(/*timestep=*/0, /*num_wgs=*/nch, N);
+      auto al = L->active_links(/*timestep=*/0, /*num_wgs=*/nch);
       int sum = 0;
       for (auto& [k, v] : al) sum += v;
       CHECK(sum == nch);

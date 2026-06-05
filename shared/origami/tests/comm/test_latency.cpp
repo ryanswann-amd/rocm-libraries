@@ -245,8 +245,8 @@ TEST(wg_tile_latency_match_golden_grid) {
                                              MI300X_SYSTEM,
                                              bw,
                                              wg_el,
-                                             /*wg_tile=*/std::nullopt,
                                              /*active_cus=*/active,
+                                             /*wg_tile=*/std::nullopt,
                                              DEFAULT_HEURISTICS,
                                              prim_enum);
 

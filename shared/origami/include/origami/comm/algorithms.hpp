@@ -95,12 +95,13 @@ class collective_algorithm_t {
  public:
   virtual ~collective_algorithm_t() = default;
 
-  virtual schedule_entry_t link_of(int pid, int timestep, int my_rank, int num_gpus) const = 0;
-  virtual int wgs_on_link(int timestep, int num_wgs, int num_gpus) const                   = 0;
-  virtual std::unordered_map<int, int> active_links(int timestep,
-                                                    int num_wgs,
-                                                    int num_gpus) const                    = 0;
-  virtual int num_timesteps() const                                                        = 0;
+  // num_gpus is fixed at construction (num_gpus_ on each concrete algorithm),
+  // so the schedule queries below take only the per-call coordinates (pid,
+  // timestep, my_rank, num_wgs) and read the communicator size from the object.
+  virtual schedule_entry_t link_of(int pid, int timestep, int my_rank) const         = 0;
+  virtual int wgs_on_link(int timestep, int num_wgs) const                           = 0;
+  virtual std::unordered_map<int, int> active_links(int timestep, int num_wgs) const = 0;
+  virtual int num_timesteps() const                                                  = 0;
 
   // Default: each timestep moves the whole gpu_tile (= 1). Chunked
   // algorithms override (ring, two-shot, a2a → N).
@@ -128,21 +129,17 @@ class all_to_same_algorithm_t : public collective_algorithm_t {
   explicit all_to_same_algorithm_t(int num_gpus, work_graph_fn_t wg_fn = {})
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
-  schedule_entry_t link_of(int /*pid*/, int timestep, int my_rank, int num_gpus) const override {
-    const int peer     = floor_mod(my_rank + timestep + 1, num_gpus);
+  schedule_entry_t link_of(int /*pid*/, int timestep, int my_rank) const override {
+    const int peer     = floor_mod(my_rank + timestep + 1, num_gpus_);
     const bool is_self = (peer == my_rank);
-    auto work          = wg_fn_(peer, my_rank, num_gpus, is_self);
+    auto work          = wg_fn_(peer, my_rank, num_gpus_, is_self);
     return {is_self ? SELF_LINK : peer, peer, direction_t::PULL, std::move(work), is_self};
   }
 
-  int wgs_on_link(int /*timestep*/, int num_wgs, int /*num_gpus*/) const override {
-    return num_wgs;
-  }
+  int wgs_on_link(int /*timestep*/, int num_wgs) const override { return num_wgs; }
 
-  std::unordered_map<int, int> active_links(int timestep,
-                                            int num_wgs,
-                                            int num_gpus) const override {
-    return {{timestep % (num_gpus - 1), num_wgs}};
+  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override {
+    return {{timestep % (num_gpus_ - 1), num_wgs}};
   }
 
   int num_timesteps() const override { return num_gpus_ - 1; }
@@ -168,26 +165,24 @@ class pid_staggered_algorithm_t : public collective_algorithm_t {
   explicit pid_staggered_algorithm_t(int num_gpus, work_graph_fn_t wg_fn = {})
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
-  schedule_entry_t link_of(int pid, int timestep, int my_rank, int num_gpus) const override {
-    const int start    = floor_mod(pid, num_gpus);
-    const int peer_idx = floor_mod(start + timestep, num_gpus);
-    const int peer     = floor_mod(my_rank + peer_idx, num_gpus);
+  schedule_entry_t link_of(int pid, int timestep, int my_rank) const override {
+    const int start    = floor_mod(pid, num_gpus_);
+    const int peer_idx = floor_mod(start + timestep, num_gpus_);
+    const int peer     = floor_mod(my_rank + peer_idx, num_gpus_);
     const bool is_self = (peer == my_rank);
-    auto work          = wg_fn_(peer, my_rank, num_gpus, is_self);
+    auto work          = wg_fn_(peer, my_rank, num_gpus_, is_self);
     return {is_self ? SELF_LINK : peer, peer, direction_t::PULL, std::move(work), is_self};
   }
 
-  int wgs_on_link(int /*timestep*/, int num_wgs, int num_gpus) const override {
-    const int num_links  = num_gpus - 1;
-    const int remote_wgs = num_wgs * (num_gpus - 1) / num_gpus;
+  int wgs_on_link(int /*timestep*/, int num_wgs) const override {
+    const int num_links  = num_gpus_ - 1;
+    const int remote_wgs = num_wgs * (num_gpus_ - 1) / num_gpus_;
     return std::max(remote_wgs / std::max(num_links, 1), 1);
   }
 
-  std::unordered_map<int, int> active_links(int /*timestep*/,
-                                            int num_wgs,
-                                            int num_gpus) const override {
-    const int num_links  = num_gpus - 1;
-    const int remote_wgs = num_wgs * (num_gpus - 1) / num_gpus;
+  std::unordered_map<int, int> active_links(int /*timestep*/, int num_wgs) const override {
+    const int num_links  = num_gpus_ - 1;
+    const int remote_wgs = num_wgs * (num_gpus_ - 1) / num_gpus_;
     const int per_link   = std::max(remote_wgs / std::max(num_links, 1), 1);
     std::unordered_map<int, int> out;
     for (int i = 0; i < num_links; ++i) out[i] = per_link;
@@ -217,24 +212,22 @@ class pid_partitioned_algorithm_t : public collective_algorithm_t {
   explicit pid_partitioned_algorithm_t(int num_gpus, work_graph_fn_t wg_fn = {})
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
-  schedule_entry_t link_of(int pid, int /*timestep*/, int my_rank, int num_gpus) const override {
-    const int dest     = floor_mod(pid, num_gpus);
-    const int peer     = floor_mod(my_rank + dest, num_gpus);
+  schedule_entry_t link_of(int pid, int /*timestep*/, int my_rank) const override {
+    const int dest     = floor_mod(pid, num_gpus_);
+    const int peer     = floor_mod(my_rank + dest, num_gpus_);
     const bool is_self = (peer == my_rank);
-    auto work          = wg_fn_(peer, my_rank, num_gpus, is_self);
+    auto work          = wg_fn_(peer, my_rank, num_gpus_, is_self);
     return {is_self ? SELF_LINK : peer, peer, direction_t::PUSH, std::move(work), is_self};
   }
 
-  int wgs_on_link(int /*timestep*/, int num_wgs, int num_gpus) const override {
-    return std::max(num_wgs / num_gpus, 1);
+  int wgs_on_link(int /*timestep*/, int num_wgs) const override {
+    return std::max(num_wgs / num_gpus_, 1);
   }
 
-  std::unordered_map<int, int> active_links(int /*timestep*/,
-                                            int num_wgs,
-                                            int num_gpus) const override {
-    const int per_link = std::max(num_wgs / num_gpus, 1);
+  std::unordered_map<int, int> active_links(int /*timestep*/, int num_wgs) const override {
+    const int per_link = std::max(num_wgs / num_gpus_, 1);
     std::unordered_map<int, int> out;
-    for (int i = 0; i < num_gpus - 1; ++i) out[i] = per_link;
+    for (int i = 0; i < num_gpus_ - 1; ++i) out[i] = per_link;
     return out;
   }
 
@@ -285,23 +278,18 @@ class ring_fixed_algorithm_t : public collective_algorithm_t {
   explicit ring_fixed_algorithm_t(int num_gpus, work_graph_fn_t wg_fn = {})
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
-  schedule_entry_t link_of(int /*pid*/,
-                           int /*timestep*/,
-                           int my_rank,
-                           int num_gpus) const override {
-    const int next_rank = floor_mod(my_rank + 1, num_gpus);
-    auto work           = wg_fn_(next_rank, my_rank, num_gpus, false);
+  schedule_entry_t link_of(int /*pid*/, int /*timestep*/, int my_rank) const override {
+    const int next_rank = floor_mod(my_rank + 1, num_gpus_);
+    auto work           = wg_fn_(next_rank, my_rank, num_gpus_, false);
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
 
-  int wgs_on_link(int /*timestep*/, int num_wgs, int num_gpus) const override {
-    return ring_wgs_per_link(num_wgs, num_gpus);
+  int wgs_on_link(int /*timestep*/, int num_wgs) const override {
+    return ring_wgs_per_link(num_wgs, num_gpus_);
   }
 
-  std::unordered_map<int, int> active_links(int /*timestep*/,
-                                            int num_wgs,
-                                            int num_gpus) const override {
-    return ring_distribute(num_wgs, num_gpus);
+  std::unordered_map<int, int> active_links(int /*timestep*/, int num_wgs) const override {
+    return ring_distribute(num_wgs, num_gpus_);
   }
 
   int num_timesteps() const override { return num_gpus_ - 1; }
@@ -336,11 +324,8 @@ class ring_all_gather_algorithm_t : public collective_algorithm_t {
  public:
   explicit ring_all_gather_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
-  schedule_entry_t link_of(int /*pid*/,
-                           int /*timestep*/,
-                           int my_rank,
-                           int num_gpus) const override {
-    const int next_rank    = floor_mod(my_rank + 1, num_gpus);
+  schedule_entry_t link_of(int /*pid*/, int /*timestep*/, int my_rank) const override {
+    const int next_rank    = floor_mod(my_rank + 1, num_gpus_);
     std::vector<op_t> work = {
         load_t{},
         store_t{},
@@ -349,14 +334,12 @@ class ring_all_gather_algorithm_t : public collective_algorithm_t {
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
 
-  int wgs_on_link(int /*timestep*/, int num_wgs, int num_gpus) const override {
-    return ring_wgs_per_link(num_wgs, num_gpus);
+  int wgs_on_link(int /*timestep*/, int num_wgs) const override {
+    return ring_wgs_per_link(num_wgs, num_gpus_);
   }
 
-  std::unordered_map<int, int> active_links(int /*timestep*/,
-                                            int num_wgs,
-                                            int num_gpus) const override {
-    return ring_distribute(num_wgs, num_gpus);
+  std::unordered_map<int, int> active_links(int /*timestep*/, int num_wgs) const override {
+    return ring_distribute(num_wgs, num_gpus_);
   }
 
   int num_timesteps() const override { return num_gpus_ - 1; }
@@ -374,11 +357,8 @@ class ring_reduce_scatter_algorithm_t : public collective_algorithm_t {
  public:
   explicit ring_reduce_scatter_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
-  schedule_entry_t link_of(int /*pid*/,
-                           int /*timestep*/,
-                           int my_rank,
-                           int num_gpus) const override {
-    const int next_rank    = floor_mod(my_rank + 1, num_gpus);
+  schedule_entry_t link_of(int /*pid*/, int /*timestep*/, int my_rank) const override {
+    const int next_rank    = floor_mod(my_rank + 1, num_gpus_);
     std::vector<op_t> work = {
         load_t{},
         reduce_t{},
@@ -388,14 +368,12 @@ class ring_reduce_scatter_algorithm_t : public collective_algorithm_t {
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
 
-  int wgs_on_link(int /*timestep*/, int num_wgs, int num_gpus) const override {
-    return ring_wgs_per_link(num_wgs, num_gpus);
+  int wgs_on_link(int /*timestep*/, int num_wgs) const override {
+    return ring_wgs_per_link(num_wgs, num_gpus_);
   }
 
-  std::unordered_map<int, int> active_links(int /*timestep*/,
-                                            int num_wgs,
-                                            int num_gpus) const override {
-    return ring_distribute(num_wgs, num_gpus);
+  std::unordered_map<int, int> active_links(int /*timestep*/, int num_wgs) const override {
+    return ring_distribute(num_wgs, num_gpus_);
   }
 
   int num_timesteps() const override { return num_gpus_ - 1; }
@@ -417,8 +395,8 @@ class two_shot_all_reduce_algorithm_t : public collective_algorithm_t {
  public:
   explicit two_shot_all_reduce_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
-  schedule_entry_t link_of(int pid, int timestep, int my_rank, int num_gpus) const override {
-    const int N     = num_gpus;
+  schedule_entry_t link_of(int pid, int timestep, int my_rank) const override {
+    const int N     = num_gpus_;
     const int start = floor_mod(pid, N);
     if (is_reduce_phase_(timestep)) {
       const int peer_idx     = floor_mod(start + timestep, N);
@@ -439,19 +417,17 @@ class two_shot_all_reduce_algorithm_t : public collective_algorithm_t {
     return {peer, peer, direction_t::PUSH, std::move(work), false};
   }
 
-  int wgs_on_link(int timestep, int num_wgs, int num_gpus) const override {
-    const int num_links = num_gpus - 1;
+  int wgs_on_link(int timestep, int num_wgs) const override {
+    const int num_links = num_gpus_ - 1;
     const int remote_wgs =
-        is_reduce_phase_(timestep) ? num_wgs * (num_gpus - 1) / num_gpus : num_wgs;
+        is_reduce_phase_(timestep) ? num_wgs * (num_gpus_ - 1) / num_gpus_ : num_wgs;
     return std::max(remote_wgs / std::max(num_links, 1), 1);
   }
 
-  std::unordered_map<int, int> active_links(int timestep,
-                                            int num_wgs,
-                                            int num_gpus) const override {
-    const int num_links = num_gpus - 1;
+  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override {
+    const int num_links = num_gpus_ - 1;
     const int remote_wgs =
-        is_reduce_phase_(timestep) ? num_wgs * (num_gpus - 1) / num_gpus : num_wgs;
+        is_reduce_phase_(timestep) ? num_wgs * (num_gpus_ - 1) / num_gpus_ : num_wgs;
     const int per_link = std::max(remote_wgs / std::max(num_links, 1), 1);
     std::unordered_map<int, int> out;
     for (int i = 0; i < num_links; ++i) out[i] = per_link;
@@ -478,10 +454,10 @@ class ring_all_reduce_algorithm_t : public collective_algorithm_t {
  public:
   explicit ring_all_reduce_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
-  schedule_entry_t link_of(int /*pid*/, int timestep, int my_rank, int num_gpus) const override {
-    const int next_rank = floor_mod(my_rank + 1, num_gpus);
-    const int prev_rank = floor_mod(my_rank - 1, num_gpus);
-    const int rs_visits = num_gpus - 1;
+  schedule_entry_t link_of(int /*pid*/, int timestep, int my_rank) const override {
+    const int next_rank = floor_mod(my_rank + 1, num_gpus_);
+    const int prev_rank = floor_mod(my_rank - 1, num_gpus_);
+    const int rs_visits = num_gpus_ - 1;
 
     std::vector<op_t> work;
     if (timestep < rs_visits) {
@@ -504,14 +480,12 @@ class ring_all_reduce_algorithm_t : public collective_algorithm_t {
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
 
-  int wgs_on_link(int /*timestep*/, int num_wgs, int num_gpus) const override {
-    return ring_wgs_per_link(num_wgs, num_gpus);
+  int wgs_on_link(int /*timestep*/, int num_wgs) const override {
+    return ring_wgs_per_link(num_wgs, num_gpus_);
   }
 
-  std::unordered_map<int, int> active_links(int /*timestep*/,
-                                            int num_wgs,
-                                            int num_gpus) const override {
-    return ring_distribute(num_wgs, num_gpus);
+  std::unordered_map<int, int> active_links(int /*timestep*/, int num_wgs) const override {
+    return ring_distribute(num_wgs, num_gpus_);
   }
 
   int num_timesteps() const override { return 2 * (num_gpus_ - 1); }
@@ -529,11 +503,8 @@ class ring_broadcast_algorithm_t : public collective_algorithm_t {
  public:
   explicit ring_broadcast_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
-  schedule_entry_t link_of(int /*pid*/,
-                           int /*timestep*/,
-                           int my_rank,
-                           int num_gpus) const override {
-    const int next_rank    = floor_mod(my_rank + 1, num_gpus);
+  schedule_entry_t link_of(int /*pid*/, int /*timestep*/, int my_rank) const override {
+    const int next_rank    = floor_mod(my_rank + 1, num_gpus_);
     std::vector<op_t> work = {
         load_t{},
         store_t{},
@@ -542,14 +513,12 @@ class ring_broadcast_algorithm_t : public collective_algorithm_t {
     return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
   }
 
-  int wgs_on_link(int /*timestep*/, int num_wgs, int num_gpus) const override {
-    return ring_wgs_per_link(num_wgs, num_gpus);
+  int wgs_on_link(int /*timestep*/, int num_wgs) const override {
+    return ring_wgs_per_link(num_wgs, num_gpus_);
   }
 
-  std::unordered_map<int, int> active_links(int /*timestep*/,
-                                            int num_wgs,
-                                            int num_gpus) const override {
-    return ring_distribute(num_wgs, num_gpus);
+  std::unordered_map<int, int> active_links(int /*timestep*/, int num_wgs) const override {
+    return ring_distribute(num_wgs, num_gpus_);
   }
 
   int num_timesteps() const override { return num_gpus_ - 1; }
@@ -639,6 +608,16 @@ inline std::unique_ptr<collective_algorithm_t> resolve_algorithm(primitive_t col
   throw std::invalid_argument(std::string{"algorithm '"} + std::string{algorithm_name(algorithm)} +
                               "' is not a valid implementation of collective '" +
                               std::string{primitive_name(collective)} + "'");
+}
+
+// Bundle overload: the collective comes from the problem (correctness), the
+// algorithm from the config (performance), and num_gpus is the communicator
+// size on the problem. This is the form the latency engine calls; the scalar
+// overload above stays for unit tests that probe (collective, algorithm) pairs
+// directly.
+inline std::unique_ptr<collective_algorithm_t> resolve_algorithm(const comm_problem_t& problem,
+                                                                 const comm_config_t& config) {
+  return resolve_algorithm(problem.collective, config.algorithm, problem.num_gpus);
 }
 
 }  // namespace origami::comm
