@@ -164,6 +164,23 @@ if(ORIGAMI_BUILD_TESTING OR BUILD_TESTING)
             DEPENDS _pyorigami
     )
 
+    # Run comm (collective cost model) binding regression tests. These
+    # correlate origami.comm against the same frozen golden CSVs the C++ comm
+    # suite checks, proving the bindings introduce no numerical drift.
+    add_test(
+        NAME "Python: test_comm_bindings"
+        COMMAND ${Python_EXECUTABLE} -m pytest tests/test_comm.py -v
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    set_tests_properties(
+        "Python: test_comm_bindings"
+        PROPERTIES
+            ENVIRONMENT
+            "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src:$ENV{PYTHONPATH}"
+            DEPENDS _pyorigami
+    )
+
     # Install Python test files to bin/origami/tests for TheRock CI testing.
     install(
         DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests/"
