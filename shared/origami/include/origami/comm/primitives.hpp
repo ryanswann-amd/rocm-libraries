@@ -26,12 +26,23 @@
 
 // origami::comm — analytical communication cost model
 //
-// Communication primitives — composable operations that map to functional
-// unit work.
+// Communication primitives — the verbs a collective is built from
+// (load/store/pull/push/reduce/signal/wait).
 //
-// Each primitive's resolve() traces the full data path through the cache
-// hierarchy and returns functional_unit_work_t for one loop iteration
-// (cl_per_iter cache lines).
+// First principle: a byte's cost is determined by *which stages of the memory
+// hierarchy it must physically pass through*. Every primitive's resolve()
+// walks that path and bills one cache line to each stage it crosses, for one
+// software-pipelined iteration (cl_per_iter lines). The hierarchy, outermost
+// to the registers, is:
+//
+//     HBM ── MALL(Infinity Cache) ── L2/TCC ── TCP/vL1D ── registers
+//                                                   xGMI ┘ (to/from a peer GPU)
+//
+// A local load touches every level on the way in; a remote pull arrives over
+// xGMI into L2 and never touches local MALL/HBM; a push reads locally then
+// pays an xGMI egress write. Because latency.hpp later takes the max over
+// stages, what matters is not the byte count but the *set* of stages each
+// primitive lights up — that set is exactly what these structs encode.
 #pragma once
 
 #include "origami/comm/types.hpp"
@@ -53,7 +64,10 @@ struct resolve_args_t {
 };
 
 // ─── Primitives ──────────────────────────────────────────────────
-// Read from local HBM into registers.
+// Read from local HBM into registers. A cold load misses at every level, so
+// the line is charged at HBM, MALL, L2 and TCP (the read ripples up the whole
+// hierarchy), plus the VMEM issue slots to actually move it
+// (cl_per_iter × instrs_per_cl, where instrs_per_cl depends on load width).
 struct load_t {
   constexpr functional_unit_work_t resolve(const resolve_args_t& a) const noexcept {
     functional_unit_work_t w{};
@@ -66,7 +80,11 @@ struct load_t {
   }
 };
 
-// Write from registers to local HBM. `write_through=true` bypasses L2.
+// Write from registers to local HBM. The write drains down the hierarchy
+// (TCP → L2 → MALL → HBM). `write_through=true` models the CDNA write-through
+// + atomic-release path used for inter-rank visibility: the line is pushed
+// straight past L2 (no allocate/writeback there), so the L2 line is not
+// charged — the data must reach a coherence point, not linger cached.
 struct store_t {
   bool write_through = false;
 
@@ -81,7 +99,11 @@ struct store_t {
   }
 };
 
-// Read from a remote GPU's HBM via xGMI (ingress).
+// Read from a remote GPU's HBM via xGMI (ingress). The bytes originate on the
+// peer, so locally they never pass through *our* MALL or HBM — they enter over
+// the fabric and land in L2/TCP. Hence the charge is xGMI + L2 + TCP only; the
+// xGMI line is what makes this primitive latency-bound on the 660 ns RTT (see
+// the MSHR cap in latency.hpp) rather than on local memory bandwidth.
 struct pull_t {
   int peer = 0;
 
@@ -95,7 +117,11 @@ struct pull_t {
   }
 };
 
-// Write to a remote GPU's HBM via xGMI (egress).
+// Write to a remote GPU's HBM via xGMI (egress). Unlike pull, push first has
+// to *source* the data locally — a full local read (HBM→MALL→L2→TCP) — and
+// then emit it onto the fabric (xGMI write). It therefore touches both the
+// local read path and the egress link, which is why push-heavy collectives
+// (e.g. all-gather) are bound by the xGMI write-concentration curve.
 struct push_t {
   int peer = 0;
 
@@ -111,7 +137,11 @@ struct push_t {
   }
 };
 
-// Element-wise reduction on data in registers.
+// Element-wise reduction on data already in registers (the arithmetic in a
+// reduce-scatter / all-reduce). It moves no lines — the data is resident — so
+// the only cost is VALU lane-ops, one per element reduced this iteration. This
+// is the sole primitive that can make a collective compute-bound rather than
+// bandwidth-bound.
 struct reduce_t {
   reduce_op_t op = reduce_op_t::SUM;
 
@@ -122,7 +152,11 @@ struct reduce_t {
   }
 };
 
-// Notify a peer that data is ready.
+// Notify a peer that this rank's data is ready (producer side of the
+// handshake). Modeled as one fabric atomic (counted for T_sync, charged at
+// atomic_latency_cycles) plus the single line that carries the flag across
+// xGMI. It is iteration-independent — one signal per tile, not per element —
+// so resolve_work_graph routes it to sync_work, not the inner loop.
 struct signal_t {
   int peer = 0;
 
@@ -134,7 +168,11 @@ struct signal_t {
   }
 };
 
-// Spin-wait for a peer's signal.
+// Spin-wait until a peer's signal arrives (consumer side). The polling read
+// resolves locally in L2 once the released flag has propagated, so it is one
+// atomic + one L2 line. Like signal, it is a per-tile sync cost, not inner-
+// loop work. Together signal/wait encode the producer→consumer dependency
+// whose count drives the per-timestep handshake latency.
 struct wait_t {
   int peer = 0;
 
@@ -150,10 +188,15 @@ struct wait_t {
 using op_t = std::variant<load_t, store_t, pull_t, push_t, reduce_t, signal_t, wait_t>;
 
 // ─── resolve_work_graph ─────────────────────────────────────────
-// Composes a list of Ops into per-iteration (`iter_work`) and sync
-// (`sync_work`) functional_unit_work_t totals. signal_t/wait_t are charged
-// once per iteration to `sync_work`; everything else accumulates
-// into `iter_work` (the inner-loop body).
+// A collective step is a small program of primitives; this composes that
+// program into two buckets that the latency model treats very differently:
+//   iter_work — the data-movement body that *repeats* once per pipelined
+//               iteration and therefore scales with tile size.
+//   sync_work — the signal/wait handshakes that happen *once per tile*
+//               regardless of size, charged as a fixed per-step latency.
+// Summing within each bucket (operator+) reflects that primitives in the same
+// step contend for the FUs together. Separating the buckets is what lets a
+// large transfer be bandwidth-bound while a tiny one is handshake-bound.
 struct resolved_work_t {
   functional_unit_work_t iter_work;
   functional_unit_work_t sync_work;

@@ -26,16 +26,31 @@
 
 // origami::comm — analytical communication cost model
 //
-// Collective layouts: (pid, timestep) → link.
+// Collective layouts: the *schedule* of a collective, expressed as a pure
+// function (pid, timestep) → which link a workgroup uses and what primitives
+// it runs there. This is the bridge between an algorithm and the cost model:
+// the model never hard-codes "all-gather costs X"; it asks the layout for the
+// per-step work graph and lets latency.hpp/collective.hpp price it.
 //
-// Each layout is a closed-form function derived from actual Iris/RCCL
-// kernel loop structures. The interface is polymorphic (virtual). Layout
-// objects are constructed once per collective call, so virtual dispatch
-// overhead is negligible.
+// Three quantities a layout exposes drive the whole cost, and each is a direct
+// consequence of the algorithm's dataflow:
+//   • num_timesteps()       — how many dependent communication rounds the
+//     algorithm takes (e.g. a ring visits N-1 peers; two-shot does N reduce
+//     rounds then N-1 broadcast rounds = 2N-1). More steps ⇒ more serial
+//     handshakes and, for sequential layouts, more added latency.
+//   • chunks_per_timestep() — how finely each GPU's tile is sliced per step.
+//     A ring sends 1/N of the buffer per hop (chunks = N); a whole-tile step
+//     sends all of it (chunks = 1). This sets the per-step wire bytes.
+//   • active_links()        — how the workgroups spread across the links lit
+//     up this step, which sets per-link contention.
 //
-// Self-timestep distinction: when a timestep maps to my_rank the work
-// graph uses load_t (local HBM) instead of pull_t (xGMI). Self-timesteps
-// don't consume xGMI bandwidth or hit MSHR limits.
+// Layouts are closed-form functions over the rank topology, so they hold no
+// per-WG state and fold cheaply; virtual dispatch happens once per collective.
+//
+// Self-timestep distinction: when a step maps a rank to itself, the data is
+// already local, so the work graph uses load_t (local HBM) instead of pull_t
+// (xGMI). Self-steps consume no fabric bandwidth and are not MSHR-limited —
+// the model must not bill them as remote transfers.
 #pragma once
 
 #include "origami/comm/primitives.hpp"
@@ -64,7 +79,9 @@ struct schedule_entry_t {
 using work_graph_fn_t =
     std::function<std::vector<op_t>(int peer, int my_rank, int num_gpus, bool is_self)>;
 
-// Floored modulo: always returns a value in [0, n).
+// Floored modulo: always returns a value in [0, n). Ring schedules index peers
+// as my_rank ± offset, which can go negative or past N; this wraps those into
+// a valid rank so a single closed form expresses "the neighbour k hops away".
 constexpr int floor_mod(int a, int n) noexcept {
   const int r = a % n;
   return (r < 0) ? r + n : r;
@@ -234,8 +251,16 @@ class pid_partitioned_layout_t : public collective_layout_t {
 };
 
 // ─── Ring distribution helper ───────────────────────────────────
-// Distribute num_wgs across min(num_wgs, N-1) rings, first `extra`
-// rings carry one more WG. Shared by every ring layout.
+// Spread num_wgs workgroups over the available rings. The defining constraint
+// is conservation: the WG counts returned must sum to exactly num_wgs — every
+// launched workgroup is doing real work on some link, none invented, none
+// dropped. (An earlier even-division form violated this, dropping WGs at high
+// channel counts and fabricating them at low counts, mispricing contention.)
+//
+// There can be at most N-1 distinct ring links, so we use
+// nrings = min(num_wgs, N-1) and hand each ring floor(num_wgs/nrings), giving
+// the first `extra` rings one more so the remainder is absorbed and the total
+// is preserved.
 inline std::unordered_map<int, int> ring_distribute(int num_wgs, int num_gpus) {
   const int nrings = std::max(std::min(num_wgs, num_gpus - 1), 1);
   const int base   = num_wgs / nrings;
@@ -364,7 +389,12 @@ class ring_reduce_scatter_layout_t : public collective_layout_t {
 };
 
 // ─── two_shot_all_reduce_layout_t ─────────────────────────────────────
-// reduce_t (N steps, pid-staggered) + Broadcast (N-1 steps, no self).
+// All-reduce factored as reduce-scatter then all-gather ("two shots"): each
+// rank first pulls and sums every peer's slice (N reduce steps, including its
+// own self-step), then pushes the finished slice out to all others (N-1
+// broadcast steps). Hence num_timesteps = 2N-1 and each step moves 1/N of the
+// buffer (chunks_per_timestep = N). is_reduce_phase_ just splits the timeline
+// at step N into the two shots.
 class two_shot_all_reduce_layout_t : public collective_layout_t {
  public:
   explicit two_shot_all_reduce_layout_t(int num_gpus) : num_gpus_{num_gpus} {}
@@ -416,7 +446,13 @@ class two_shot_all_reduce_layout_t : public collective_layout_t {
 };
 
 // ─── ring_all_reduce_layout_t ────────────────────────────────────────
-// RS phase (N-1 steps) + AG phase (N-1 steps).
+// The bandwidth-optimal all-reduce: a reduce-scatter ring (N-1 steps, each
+// pulls from prev, sums, signals next) followed by an all-gather ring (N-1
+// steps, each pulls the finished slice and forwards it). 2(N-1) steps total,
+// every step crossing the same neighbour link — which is why it is a true
+// pipelined ring (is_ring_pipeline) priced by aggregate throughput, not a sum
+// of per-step latencies. The wait_t/signal_t in the work graph are the
+// producer→consumer dependency that serializes adjacent ranks within a step.
 class ring_all_reduce_layout_t : public collective_layout_t {
  public:
   explicit ring_all_reduce_layout_t(int num_gpus) : num_gpus_{num_gpus} {}

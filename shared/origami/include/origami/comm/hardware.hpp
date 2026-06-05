@@ -26,10 +26,23 @@
 
 // origami::comm — analytical communication cost model
 //
-// hardware_t constants — bottom of the cost model. All time-related fields
-// are in **GPU cycles**; rates are in **per-cycle** units. The conversion
-// to seconds happens once at the public API boundary (predict_row in
-// collective.hpp).
+// hardware_t constants — the bottom of the cost model: the physical ceilings
+// every higher layer divides work by.
+//
+// Why everything is in cycles, not seconds:
+//   The model reasons about contention between functional units (VMEM issue,
+//   TCP, L2, MALL, HBM, xGMI, VALU) that all advance on the same GPU clock.
+//   Expressing every rate as bytes-per-cycle and every latency as cycles lets
+//   the bottleneck comparison in latency.hpp be a plain max() of like units,
+//   and makes the model clock-portable: retargeting to a different frequency
+//   (overclock studies, a future part) only changes clock_ghz, not the
+//   per-cycle physics. The single cycles→seconds conversion happens once, at
+//   the public API boundary (predict_row in collective.hpp).
+//
+// Unit identity used throughout: a rate quoted in GB/s equals
+//   (GB/s) / clock_ghz  bytes-per-cycle,
+// because bytes/cycle = (bytes/ns) / (cycles/ns) = (GB/s) / clock_ghz. That is
+// why the MI300X table below writes peak aggregate rates as "<GB/s> / clock".
 #pragma once
 
 #include <algorithm>
@@ -76,7 +89,19 @@ struct hardware_t {
   double hbm_write_bw;  // bytes per cycle aggregate
   std::size_t hbm_capacity_bytes;
 
-  // BW scaling polynomial: fraction = a*N^2 + b*N + c, clamped [0,1]
+  // HBM bandwidth-utilization polynomial: fraction = a*N^2 + b*N + c of peak,
+  // clamped to [0,1], where N is the number of CUs concurrently streaming.
+  //
+  // First principle: a single CU cannot saturate HBM. Peak HBM bandwidth is
+  // only reached once enough independent CUs issue in parallel to keep every
+  // channel/arbiter busy. The fabric arbitrates per-request with no per-CU
+  // isolation, so sustained bandwidth ramps roughly linearly with active CUs
+  // until the channels saturate. The default {0,0.015,0} encodes
+  // fraction ≈ 0.015·N, i.e. each CU contributes ~1.5% of peak and the array
+  // reaches full peak near N≈67 CUs. (This linear fit is calibrated for the
+  // many-CU collective regime; it knowingly understates single-CU sustained
+  // bandwidth — see day2-atom-validation — which is irrelevant once dozens of
+  // workgroups stream a collective.)
   std::array<double, 3> mem_bw_coeffs = {0.0, 0.015, 0.0};
 
   // ── BW polynomial ──────────────────────────────────────────
@@ -86,6 +111,12 @@ struct hardware_t {
     return std::clamp(f, 0.0, 1.0);
   }
 
+  // Per-CU share of HBM read bandwidth: take the aggregate ceiling, discount
+  // it by how much of peak N active CUs can actually sustain (bw_fraction),
+  // then split that sustained aggregate evenly across the N contenders. With
+  // the linear polynomial the two N's partly cancel, so per-CU bandwidth is
+  // nearly flat across the saturated range — the realistic behaviour of a
+  // shared memory system once it is busy.
   constexpr double hbm_read_bw_per_cu(int active_cus = -1) const noexcept {
     const int n    = (active_cus < 0) ? num_cu : active_cus;
     const double f = bw_fraction(n);
@@ -98,6 +129,13 @@ struct hardware_t {
     return hbm_write_bw * f / static_cast<double>(n);
   }
 
+  // Per-CU L2 bandwidth, scaled for partial XCD occupancy. l2_bw_per_cu is
+  // calibrated for a fully-occupied XCD (all cu_per_xcd CUs sharing the TCC
+  // crossbar). When only n < cu_per_xcd CUs are active, the same crossbar
+  // bandwidth is shared among fewer consumers, so each active CU gets a larger
+  // slice — hence the (cu_per_xcd / n) upscaling. This is the inverse of the
+  // HBM polynomial: HBM under-delivers when under-subscribed, whereas the L2
+  // crossbar is per-CU-bounded so an idle CU's share is reclaimed.
   constexpr double l2_bw_per_cu_scaled(int active_cus_on_xcd = -1) const noexcept {
     int n = (active_cus_on_xcd < 0) ? cu_per_xcd : active_cus_on_xcd;
     n     = std::min(n, cu_per_xcd);
@@ -174,11 +212,47 @@ struct comm_hardware_t {
   }
 };
 
+// ─── system_t (the physical machine) ────────────────────────────────
+// A GPU plus the fabric that joins it to its peers. The model is currently
+// homogeneous — every rank is assumed to be `gpu` — so a single hardware_t
+// suffices rather than one per GPU; the GPU *count* is the communicator size
+// and lives in comm_problem_t::num_gpus, not here. If heterogeneous nodes or a
+// non-uniform link topology ever need modelling, `gpu` grows into a per-rank
+// container and `fabric` into a bandwidth matrix; until then this stays the
+// minimal honest representation of what the cost model actually consumes.
+struct system_t {
+  hardware_t gpu;          // one GPU's compute/memory ceilings
+  comm_hardware_t fabric;  // the xGMI mesh between GPUs
+};
+
 // ─── MI300X (CDNA3, gfx942) ──────────────────────────────────────
-// Constants are derived from the MI300X (CDNA3) architecture; see the
-// per-field commentary below for the relevant references.
+// 2.0 GHz is the nominal CDNA3 compute-engine clock; every "X / clock" and
+// "X * clock" below converts a natively-measured rate or latency into the
+// model's cycle units (see the unit identity at the top of this file).
 inline constexpr double _MI300X_CLOCK_GHZ = 2.0;
 
+// Per-field derivations:
+//   num_cu/num_xcd/cu_per_xcd  : CDNA3 die layout — num_xcd XCDs, each with
+//                                cu_per_xcd compute units (their product).
+//   vmem_issue_rate = 1.0      : one VMEM instruction issued per CU per cycle
+//                                (the memory pipe accepts one address/cycle).
+//   valu_rate = 2.10 * 64.0    : 64 lanes per SIMD × ~2.10 elements/lane/cycle
+//                                sustained (dual-issue + occupancy factor).
+//   tcp_capacity_bytes = 32 KiB: the vL1D/TCP per-CU cache; the request FIFO
+//                                saturates around ~5 wide loads in flight.
+//   tcp_bw = 64.0              : one global_load_dwordx16 per cycle = 64 B/cycle
+//                                — the widest VMEM transaction the lane can move.
+//   mshr_depth_per_wave = 12   : 12 outstanding dwordx4 misses per wave before
+//                                the wave stalls (the measured N=13 cliff).
+//   waves_per_wg = 10          : waves co-resident per workgroup feeding misses.
+//   xgmi_latency_cycles        : 660 ns measured remote-load round trip × clock
+//                                = 1320 cycles. This is the latency the MSHR
+//                                depth must hide to sustain remote bandwidth.
+//   l2/mall/hbm *_bw           : measured aggregate peaks (GB/s) ÷ clock to get
+//                                bytes/cycle; HBM write peak (5140) > read
+//                                (4730) on this part.
+//   hbm_capacity 192 GiB       : 8 HBM3 stacks.
+//   mem_bw_coeffs              : HBM utilization-vs-active-CU fit (see above).
 inline constexpr hardware_t MI300X = {
     /* arch                 */ "gfx942",
     /* num_cu               */ 304,
@@ -202,6 +276,19 @@ inline constexpr hardware_t MI300X = {
     /* mem_bw_coeffs        */ {0.0, 0.015, 0.0},
 };
 
+// Inter-GPU fabric. Per-field derivations:
+//   link_bw : 49.1 GiB/s measured per-link wire rate, converted to decimal
+//             bytes/s (×1024^3 / 1e9), discounted by the 1.23× wire-to-payload
+//             overhead (flit framing + ECC), then ÷ clock to get payload
+//             bytes/cycle. Net ≈ 42.9 GB/s of usable payload per link.
+//   num_peer_links = 7 : an MI300X reaches the other 7 GPUs over a fully
+//             connected single-hop xGMI mesh (one link per peer).
+//   num_sdma_engines / sdma_*_bw : DMA-copy engines and their measured one-way
+//             rates (read faster than write), ÷ clock to bytes/cycle.
+//   atomic_latency_cycles : ~100 ns per signal/wait fabric atomic × clock.
+//             This is the cost charged per producer/consumer handshake.
+//   launch_overhead_cycles : ~45 µs fixed kernel-launch + setup floor × clock,
+//             charged once per collective; it dominates the sub-kilobyte regime.
 inline constexpr comm_hardware_t MI300X_COMM = {
     /* link_bw                 */ 49.1 * (1024.0 * 1024.0 * 1024.0) / 1e9 / 1.23 /
         _MI300X_CLOCK_GHZ,
@@ -213,5 +300,8 @@ inline constexpr comm_hardware_t MI300X_COMM = {
     /* launch_overhead_cycles  */ 45000.0 * _MI300X_CLOCK_GHZ,
     /* clock_ghz               */ _MI300X_CLOCK_GHZ,
 };
+
+// The default machine: one MI300X GPU on the MI300X xGMI fabric.
+inline constexpr system_t MI300X_SYSTEM = {MI300X, MI300X_COMM};
 
 }  // namespace origami::comm

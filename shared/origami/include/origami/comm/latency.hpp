@@ -28,10 +28,27 @@
 //
 // wg_tile latency computation. All times are in **GPU cycles**.
 //
-//     T_total = T_prologue + (num_iters - 1) × T_wlt + T_epilogue + T_sync
+// Two first principles drive this file:
 //
-// The atom (T_wlt): cycles for one WG to transfer one iter_tile over
-// one link, given all WGs contending for that link.
+//   1. Bottleneck (roofline) per iteration. A workgroup drives many functional
+//      units at once (VMEM issue, TCP, L2, MALL, HBM, xGMI, VALU). They run in
+//      parallel, so the time for one iteration is set by the *slowest* unit,
+//      not the sum — hence T_wlt = max over per-FU times. compute_iter_times
+//      turns each FU's cache-line/op count into a cycle count by dividing by
+//      that FU's own throughput; bottleneck() names the winner for reporting.
+//
+//   2. Software pipelining. A WG streams its tile in num_iters iterations,
+//      overlapping the load of iter i+1 with the store of iter i. So the read
+//      path is exposed only once (T_prologue, filling the pipe), the write
+//      path drains only once (T_epilogue), and in steady state every iteration
+//      costs one bottleneck T_wlt:
+//
+//        T_total = T_prologue + (num_iters - 1) × T_wlt + T_epilogue + T_sync
+//
+//      T_sync is the once-per-tile producer/consumer handshake, off the
+//      bandwidth critical path. With large num_iters the (n-1)·T_wlt term
+//      dominates (bandwidth-bound); with num_iters=1 the prologue/epilogue/sync
+//      constants dominate (latency-bound small messages).
 #pragma once
 
 #include "origami/comm/hardware.hpp"
@@ -50,8 +67,10 @@
 namespace origami::comm {
 
 // ─── iter_times_t: per-FU one-iteration cycle counts ───────────────
-// Named fields (rather than a string-keyed map); the bottleneck()
-// helper resolves the FU with the max cycle count to a stable string.
+// One cycle count per functional unit for a single iteration. They are held
+// side by side (not summed) precisely because the units overlap: max_cycles()
+// is the roofline bottleneck for the iteration, and bottleneck() reports which
+// unit is binding so a caller can see *why* a transfer is slow.
 struct iter_times_t {
   double vmem       = 0.0;
   double tcp        = 0.0;
@@ -90,17 +109,27 @@ struct iter_times_t {
 };
 
 // ─── compute_iter_times ─────────────────────────────────────────
-// Per-FU time (in cycles) for one inner-loop iteration. All hardware
-// fields are cycle-based (bytes/cycle, cycles); the output is therefore
-// in cycles too.
+// Per-FU time (in cycles) for one inner-loop iteration. The pattern is the
+// same for every unit — time = work / throughput — but the *throughput* term
+// is where the physics lives:
+//   • bandwidth units (TCP/L2/MALL/HBM) divide cache-line bytes by a per-CU
+//     bytes/cycle rate, with HBM and L2 rates first adjusted for how many CUs
+//     are concurrently active (the contention models from hardware.hpp);
+//   • VMEM divides issued instructions by the issue rate (an issue ceiling,
+//     independent of bandwidth);
+//   • xGMI read is latency-limited (MSHR cap), xGMI write is concentration-
+//     limited — see the two blocks below;
+//   • VALU divides lane-ops by the VALU rate.
+// Output is in cycles because every hardware field is already cycle-native.
 inline iter_times_t compute_iter_times(const functional_unit_work_t& work,
-                                       const hardware_t& hw,
-                                       const comm_hardware_t& comm_hw,
+                                       const system_t& system,
                                        double bw_per_wg,
                                        int active_cus,
-                                       const heuristics_t& heur   = DEFAULT_HEURISTICS,
-                                       std::string_view primitive = "") {
-  constexpr double CL = static_cast<double>(CACHELINE_BYTES);
+                                       const heuristics_t& heur             = DEFAULT_HEURISTICS,
+                                       std::optional<primitive_t> primitive = std::nullopt) {
+  const hardware_t& hw           = system.gpu;
+  const comm_hardware_t& comm_hw = system.fabric;
+  constexpr double CL            = static_cast<double>(CACHELINE_BYTES);
   iter_times_t t{};
 
   // ── VMEM ──
@@ -113,6 +142,10 @@ inline iter_times_t compute_iter_times(const functional_unit_work_t& work,
   }
 
   // ── L2 (scaled by active CUs on this XCD) ──
+  // L2/TCC is per-XCD, so contention is decided by how many active CUs land on
+  // one XCD, not the whole device. Spreading active_cus evenly over num_xcd
+  // gives the per-XCD occupancy that l2_bw_per_cu_scaled reclaims idle slices
+  // from.
   const int active_per_xcd =
       std::max<int>(static_cast<int>(std::ceil(static_cast<double>(active_cus) / hw.num_xcd)), 1);
   const double l2_bw = hw.l2_bw_per_cu_scaled(active_per_xcd);
@@ -133,7 +166,14 @@ inline iter_times_t compute_iter_times(const functional_unit_work_t& work,
     t.hbm_write = static_cast<double>(work.hbm_write_cl) * CL / hbm_w_per_cu;
   }
 
-  // ── xGMI read: min(link share, MSHR-limited) ──
+  // ── xGMI read: latency-bound by outstanding-request limit ──
+  // A remote read is gated by Little's law, not raw link width: a wave can
+  // only keep mshr_depth misses in flight, and each takes xgmi_latency_cycles
+  // (the 660 ns RTT) to return. So the bandwidth a WG can *sustain* is
+  //   (in-flight bytes) / (round-trip latency)
+  //   = (mshr_depth × waves_per_wg × CL) / xgmi_latency_cycles.
+  // The WG cannot exceed either this latency cap or its share of the physical
+  // link (bw_per_wg), so the effective rate is the min of the two.
   const double mshr_limited_bw =
       (static_cast<double>(hw.mshr_depth_per_wave) * hw.waves_per_wg * CL) / hw.xgmi_latency_cycles;
   const double effective_remote_read_bw = std::min(bw_per_wg, mshr_limited_bw);
@@ -141,10 +181,21 @@ inline iter_times_t compute_iter_times(const functional_unit_work_t& work,
     t.xgmi_read = static_cast<double>(work.xgmi_read_cl) * CL / effective_remote_read_bw;
   }
 
-  // ── xGMI write: concentration heuristic ──
+  // ── xGMI write: concentration-limited ──
+  // Writes behave differently from reads: a link is poorly utilized by a
+  // single WG and only approaches full payload rate as more WGs pile onto it
+  // (their in-flight stores overlap to hide framing/turnaround). Empirically
+  // the link utilization follows a saturating ramp util = 1 − exp(−wgs/k):
+  // ~1 WG reaches a small fraction, several WGs most of the link (k, set per
+  // primitive in heuristics, controls how fast it saturates). We estimate how
+  // many WGs share this link (link_bw / bw_per_wg), apply the ramp to get the
+  // effective aggregate link bandwidth, then split it back per WG.
   if (work.xgmi_write_cl > 0 && bw_per_wg > 0.0) {
-    const double wgs_on_link         = std::max(comm_hw.link_bw / bw_per_wg, 1.0);
-    const double k                   = heur.k_xgmi_write(primitive);
+    const double wgs_on_link = std::max(comm_hw.link_bw / bw_per_wg, 1.0);
+    // No operation context (nullopt) falls back to the default k, matching the
+    // old empty-string behaviour of the string-keyed lookup.
+    const double k =
+        primitive ? heur.k_xgmi_write(*primitive) : heur.xgmi_write_concentration_k_default;
     const double util                = 1.0 - std::exp(-wgs_on_link / k);
     const double eff_link_bw         = comm_hw.link_bw * util;
     const double eff_write_bw_per_wg = eff_link_bw / wgs_on_link;
@@ -160,11 +211,15 @@ inline iter_times_t compute_iter_times(const functional_unit_work_t& work,
 }
 
 // ─── iter_counts_from_tile ─────────────────────────────────────
-// Resolve (num_iters, elements_per_iter) for one wg_tile.
-//
-//   contiguous=true : flat-byte iteration walk
-//   contiguous=false: row-aware walk (per-row partial CL costs an iter)
-//
+// How many pipelined iterations a WG tile takes, and how many elements each
+// iteration reduces (the latter only matters for the VALU term). The walk has
+// to respect the tile's memory layout:
+//   contiguous : the tile is one flat byte run, so it is simply chopped into
+//                cl_per_iter-line iterations — ceil(cachelines / cl_per_iter).
+//   strided    : each of the m rows must be walked separately (a row's partial
+//                final line cannot be merged with the next row), so the count
+//                is m × iters_per_row. This is the iteration-level consequence
+//                of the same contiguity penalty tile_shape_t.cachelines models.
 // Returns {num_iters, elements_per_iter}. Both ≥ 1.
 inline std::pair<std::size_t, std::size_t> iter_counts_from_tile(
     const std::optional<tile_shape_t>& wg_tile,
@@ -193,16 +248,17 @@ inline wg_tile_latency_breakdown_t compute_wg_tile_latency(
     const std::vector<op_t>& work_graph,
     std::size_t wg_tile_cachelines,
     const comm_config_t& config,
-    const hardware_t& hw,
-    const comm_hardware_t& comm_hw,
+    const system_t& system,
     double bw_per_wg,
     std::size_t wg_tile_elements,
-    std::optional<tile_shape_t> wg_tile = std::nullopt,
-    std::optional<int> active_cus_opt   = std::nullopt,
-    const heuristics_t& heur            = DEFAULT_HEURISTICS,
-    std::string_view primitive          = "") {
-  const std::size_t cl_per_iter = static_cast<std::size_t>(config.cl_per_iter());
-  const int instrs_per_cl       = config.instrs_per_cl();
+    std::optional<tile_shape_t> wg_tile  = std::nullopt,
+    std::optional<int> active_cus_opt    = std::nullopt,
+    const heuristics_t& heur             = DEFAULT_HEURISTICS,
+    std::optional<primitive_t> primitive = std::nullopt) {
+  const hardware_t& hw           = system.gpu;
+  const comm_hardware_t& comm_hw = system.fabric;
+  const std::size_t cl_per_iter  = static_cast<std::size_t>(config.cl_per_iter());
+  const int instrs_per_cl        = config.instrs_per_cl();
 
   auto [num_iters, elements_per_iter] =
       iter_counts_from_tile(wg_tile, wg_tile_cachelines, wg_tile_elements, cl_per_iter);
@@ -214,11 +270,17 @@ inline wg_tile_latency_breakdown_t compute_wg_tile_latency(
 
   const int active_cus = active_cus_opt.value_or(config.num_wgs);
   const iter_times_t times =
-      compute_iter_times(resolved.iter_work, hw, comm_hw, bw_per_wg, active_cus, heur, primitive);
+      compute_iter_times(resolved.iter_work, system, bw_per_wg, active_cus, heur, primitive);
 
-  const double T_wlt = times.max_cycles();  // one iteration = one WLT
+  // Steady-state cost of one pipelined iteration = the binding FU (roofline).
+  const double T_wlt = times.max_cycles();
 
-  // Prologue = max of READ path times that are >0.
+  // Pipeline fill/drain. In steady state reads and writes overlap, but the
+  // very first iteration's reads have nothing to hide behind (prologue) and
+  // the very last iteration's writes have nothing following them (epilogue).
+  // Each is the slowest stage on its side of the pipe: prologue = the dominant
+  // inbound stage (local HBM read, remote xGMI read, or MALL), epilogue = the
+  // dominant outbound stage (HBM or xGMI write).
   auto max_positive = [](std::initializer_list<double> xs) -> double {
     double best = 0.0;
     for (double v : xs)
@@ -228,9 +290,14 @@ inline wg_tile_latency_breakdown_t compute_wg_tile_latency(
   const double T_prologue = max_positive({times.hbm_read, times.xgmi_read, times.mall});
   const double T_epilogue = max_positive({times.hbm_write, times.xgmi_write});
 
+  // One-time handshake for the whole tile (every signal/wait atomic), serial
+  // with the transfer because the consumer cannot start until it is observed.
   const double T_sync =
       static_cast<double>(resolved.sync_work.atomic_count) * comm_hw.atomic_latency_cycles;
 
+  // Fill + (num_iters−1) overlapped steady-state iterations + drain + sync.
+  // The −1 is because the first iteration is already accounted for by the
+  // prologue (its reads) and overlaps into the steady region.
   const double T_total = T_prologue +
                          std::max<double>(static_cast<double>(num_iters) - 1.0, 0.0) * T_wlt +
                          T_epilogue + T_sync;

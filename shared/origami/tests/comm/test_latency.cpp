@@ -157,8 +157,10 @@ TEST(iter_times_match_golden_grid) {
     const double bw        = std::stod(f[4]);
 
     const auto work = make_work(kind);
+    const std::optional<primitive_t> prim_enum =
+        prim.empty() ? std::nullopt : std::optional<primitive_t>{primitive_from_name(prim)};
     const auto times =
-        compute_iter_times(work, MI300X, MI300X_COMM, bw, active, DEFAULT_HEURISTICS, prim);
+        compute_iter_times(work, MI300X_SYSTEM, bw, active, DEFAULT_HEURISTICS, prim_enum);
 
     struct {
       const char* name;
@@ -226,6 +228,8 @@ TEST(wg_tile_latency_match_golden_grid) {
     const int active        = std::stoi(f[4]);
     const double bw         = std::stod(f[5]);
     const std::string prim  = f[6];
+    const std::optional<primitive_t> prim_enum =
+        prim.empty() ? std::nullopt : std::optional<primitive_t>{primitive_from_name(prim)};
 
     const auto ops = make_graph(graph);
 
@@ -238,14 +242,13 @@ TEST(wg_tile_latency_match_golden_grid) {
     const auto out = compute_wg_tile_latency(ops,
                                              wg_cl,
                                              cfg,
-                                             MI300X,
-                                             MI300X_COMM,
+                                             MI300X_SYSTEM,
                                              bw,
                                              wg_el,
                                              /*wg_tile=*/std::nullopt,
                                              /*active_cus=*/active,
                                              DEFAULT_HEURISTICS,
-                                             prim);
+                                             prim_enum);
 
     struct {
       const char* name;
@@ -327,8 +330,8 @@ TEST(wg_tile_latency_match_golden_grid) {
 
 // ─── Smoke: iter_times structural identity ──────────────────────
 TEST(iter_times_load_path_full_levels) {
-  const auto times = compute_iter_times(
-      make_work("load"), MI300X, MI300X_COMM, MI300X_COMM.link_bw, /*active_cus=*/16);
+  const auto times =
+      compute_iter_times(make_work("load"), MI300X_SYSTEM, MI300X_COMM.link_bw, /*active_cus=*/16);
   // Read path is populated, write path is zero.
   CHECK(times.vmem > 0.0);
   CHECK(times.tcp > 0.0);

@@ -99,7 +99,7 @@ TEST(predict_tensor_collective_match_golden_grid) {
     const int exp_tile_sd          = std::stoi(f[15]);
 
     const auto p = predict_tensor_collective(
-        op, shape, dtype_str, W, dim, nch, MI300X, MI300X_COMM, framework, DEFAULT_HEURISTICS);
+        op, shape, dtype_str, W, dim, nch, MI300X_SYSTEM, framework, DEFAULT_HEURISTICS);
 
     ++rows;
     bool row_bad = false;
@@ -175,9 +175,9 @@ TEST(predict_tensor_collective_match_golden_grid) {
 // ─── Spot checks ────────────────────────────────────────────────
 TEST(framework_overhead_torch_adds_400us) {
   const auto raw_p = predict_tensor_collective(
-      "all_gather", {4096}, "bf16", 8, 0, 32, MI300X, MI300X_COMM, "raw", DEFAULT_HEURISTICS);
+      "all_gather", {4096}, "bf16", 8, 0, 32, MI300X_SYSTEM, "raw", DEFAULT_HEURISTICS);
   const auto torch_p = predict_tensor_collective(
-      "all_gather", {4096}, "bf16", 8, 0, 32, MI300X, MI300X_COMM, "torch", DEFAULT_HEURISTICS);
+      "all_gather", {4096}, "bf16", 8, 0, 32, MI300X_SYSTEM, "torch", DEFAULT_HEURISTICS);
   CHECK_NEAR(torch_p.predicted_us - raw_p.predicted_us, 400.0, 1e-12);
   CHECK_NEAR(torch_p.backend_us(), raw_p.backend_us(), 1e-12);
 }
@@ -206,7 +206,7 @@ TEST(shape_lowering_split_dim_picks_last_or_outer) {
 
 TEST(world_size_1_is_no_op_plus_framework_overhead) {
   const auto p = predict_tensor_collective(
-      "all_reduce", {4096}, "bf16", 1, 0, 8, MI300X, MI300X_COMM, "torch", DEFAULT_HEURISTICS);
+      "all_reduce", {4096}, "bf16", 1, 0, 8, MI300X_SYSTEM, "torch", DEFAULT_HEURISTICS);
   CHECK_NEAR(p.predicted_us, 400.0, 1e-12);
   CHECK_NEAR(p.backend_us(), 0.0, 1e-12);
   CHECK(p.wire_bytes_per_rank == 0);

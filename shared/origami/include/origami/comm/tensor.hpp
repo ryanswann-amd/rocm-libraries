@@ -55,8 +55,13 @@
 namespace origami::comm {
 
 // ─── Wire-factor + msg-bytes convention ──────────────────────────
-// Per-rank wire bytes = factor × per_rank_buffer_bytes.  Matches the
-// rccl-tests busbw formulas.
+// How many bytes a rank actually moves on the fabric per byte of user buffer.
+// These are the standard bus-bandwidth factors (matching rccl-tests): with N
+// ranks a ring touches each byte N-1 times, so AG and RS carry (N-1)×; an
+// all-reduce is an RS followed by an AG, hence 2(N-1)/N; an all-to-all keeps
+// 1/N locally and ships the rest, (N-1)/N; a broadcast sends each byte once.
+// Exposed for reporting (wire_bytes_per_rank); the cost model derives traffic
+// from the layout, so this is a cross-check, not the source of the prediction.
 inline double wire_factor(std::string_view op, int world_size) {
   const double n = static_cast<double>(world_size);
   if (op == "all_reduce") return 2.0 * (n - 1.0) / n;
@@ -67,6 +72,10 @@ inline double wire_factor(std::string_view op, int world_size) {
   throw std::invalid_argument(std::string{"unknown op: "} + std::string{op});
 }
 
+// predict_row takes msg_bytes in the benchmark's convention, which differs by
+// op: every collective reports its per-rank buffer except reduce_scatter,
+// whose msg_bytes is the *aggregate* pre-scatter buffer = per_rank × N. This
+// reverses the per-rank division predict_row applies, so the two agree.
 inline std::size_t msg_bytes_for_predict_row(std::string_view op,
                                              std::size_t per_rank_bytes,
                                              int world_size) {
@@ -102,6 +111,12 @@ inline data_type_t normalize_dtype(std::string_view dt) {
 inline data_type_t normalize_dtype(data_type_t dt) noexcept { return dt; }
 
 // ─── Shape → (M_full, N_full, split_dim) lowering ───────────────
+// The model reasons about the *full* logical tensor and a split axis, but the
+// caller supplies a *per-rank* shape (what each GPU holds). This reconstructs
+// the global [M,N]: collapse all-but-last dims into M (rows) and the last dim
+// into N (columns), then multiply whichever axis was sharded by world_size to
+// recover its full extent. split_dim records which axis that was, so the lower
+// layers re-derive each rank's tile by the inverse division.
 struct full_mn_t {
   std::size_t M_full;
   std::size_t N_full;
@@ -174,12 +189,11 @@ inline tensor_collective_prediction_t predict_tensor_collective(
     const std::vector<std::size_t>& input_shape,
     data_type_t dtype,
     int world_size,
-    int dim                        = 0,
-    int nchannels                  = 32,
-    const hardware_t& hw           = MI300X,
-    const comm_hardware_t& comm_hw = MI300X_COMM,
-    std::string_view framework     = "raw",
-    const heuristics_t& heur       = DEFAULT_HEURISTICS) {
+    int dim                    = 0,
+    int nchannels              = 32,
+    const system_t& system     = MI300X_SYSTEM,
+    std::string_view framework = "raw",
+    const heuristics_t& heur   = DEFAULT_HEURISTICS) {
   if (!is_supported_op(op)) {
     throw std::invalid_argument(std::string{"unsupported op: "} + std::string{op});
   }
@@ -231,16 +245,8 @@ inline tensor_collective_prediction_t predict_tensor_collective(
   const auto full             = per_rank_shape_to_full_mn(input_shape, dim, world_size);
   const std::size_t msg_bytes = msg_bytes_for_predict_row(op, per_rank_bytes, world_size);
 
-  const double backend_us = predict_row(op,
-                                        msg_bytes,
-                                        world_size,
-                                        nchannels,
-                                        hw,
-                                        comm_hw,
-                                        full.M_full,
-                                        full.N_full,
-                                        full.split_dim,
-                                        heur);
+  const double backend_us = predict_row(
+      op, msg_bytes, world_size, nchannels, system, full.M_full, full.N_full, full.split_dim, heur);
 
   const double predicted_us = backend_us + overhead_us;
 
@@ -274,20 +280,18 @@ inline tensor_collective_prediction_t predict_tensor_collective(
     const std::vector<std::size_t>& input_shape,
     std::string_view dtype_name,
     int world_size,
-    int dim                        = 0,
-    int nchannels                  = 32,
-    const hardware_t& hw           = MI300X,
-    const comm_hardware_t& comm_hw = MI300X_COMM,
-    std::string_view framework     = "raw",
-    const heuristics_t& heur       = DEFAULT_HEURISTICS) {
+    int dim                    = 0,
+    int nchannels              = 32,
+    const system_t& system     = MI300X_SYSTEM,
+    std::string_view framework = "raw",
+    const heuristics_t& heur   = DEFAULT_HEURISTICS) {
   return predict_tensor_collective(op,
                                    input_shape,
                                    normalize_dtype(dtype_name),
                                    world_size,
                                    dim,
                                    nchannels,
-                                   hw,
-                                   comm_hw,
+                                   system,
                                    framework,
                                    heur);
 }

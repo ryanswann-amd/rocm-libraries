@@ -99,13 +99,14 @@ TEST(collective_latency_match_golden_grid) {
     const double T_exp  = std::stod(f[7]);
 
     comm_problem_t problem{M, N, W, data_type_t::BFloat16, split_dim};
+    problem.collective = primitive_from_name(prim);
     comm_config_t config{};
     config.num_wgs          = nch;
     config.load_width       = load_width_t::DWORDX16;
     config.vgprs_for_data   = 128;
     config.min_bytes_per_wg = DEFAULT_HEURISTICS.min_bytes_per_wg;
 
-    const double T_got = compute_collective_latency(prim, problem, config, MI300X, MI300X_COMM);
+    const double T_got = compute_collective_latency(problem, config, MI300X_SYSTEM);
 
     ++rows;
     // Cycle counts can be up to ~10^9 for a 4 MiB collective at 2 GHz;
@@ -154,7 +155,7 @@ TEST(predict_row_match_golden_grid) {
     const std::size_t msg  = std::stoull(f[3]);
     const double T_exp     = std::stod(f[4]);
 
-    const double T_got = predict_row(prim, msg, W, nch, MI300X, MI300X_COMM);
+    const double T_got = predict_row(prim, msg, W, nch, MI300X_SYSTEM);
 
     ++rows;
     // Predictions: ~10 µs (small messages) to ~10^5 µs (large at W=8).
@@ -184,10 +185,10 @@ TEST(predict_row_match_golden_grid) {
 TEST(predict_row_launch_overhead_floor) {
   // 1 KiB AG at W=2 with 1 channel: dominated by ring-step overhead
   // + launch overhead. Should be well above 45 µs (the launch floor).
-  const double T = predict_row("all_gather", 1024, 2, 1, MI300X, MI300X_COMM);
+  const double T = predict_row("all_gather", 1024, 2, 1, MI300X_SYSTEM);
   CHECK(T > 45.0);
   // Large message at W=8 should be >> 1 ms (huge).
-  const double T_big = predict_row("all_gather", 64 * 1024 * 1024, 8, 32, MI300X, MI300X_COMM);
+  const double T_big = predict_row("all_gather", 64 * 1024 * 1024, 8, 32, MI300X_SYSTEM);
   CHECK(T_big > 1000.0);  // >1 ms, sanity
 }
 
@@ -198,9 +199,10 @@ TEST(allreduce_uses_two_shot_layout) {
   // a regression here would surface as a totally different magnitude
   // (predict_row would deviate by orders of magnitude).
   comm_problem_t problem{1, 65536, 8, data_type_t::BFloat16, 0};
+  problem.collective = primitive_t::all_reduce;
   comm_config_t cfg{};
   cfg.num_wgs    = 8;
-  const double T = compute_collective_latency("all_reduce", problem, cfg, MI300X, MI300X_COMM);
+  const double T = compute_collective_latency(problem, cfg, MI300X_SYSTEM);
   CHECK(T > 0.0);
 }
 
