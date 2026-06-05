@@ -54,10 +54,16 @@
 
 namespace origami::comm {
 
-// ─── op_t argument bundle ─────────────────────────────────────────
-// Avoids 3 positional args at every call site
-// (cl_per_iter, instrs_per_cl, elements_per_iter).
-struct resolve_args_t {
+// ─── iter_dims_t ──────────────────────────────────────────────────
+// The sizing of one software-pipelined iteration: how much data it moves and
+// the instruction density to move it. Each primitive's resolve() multiplies
+// these against its functional-unit pattern to produce the iteration's work.
+// Bundled so the dimensions travel as one named value, not 3 positional args.
+//   cl_per_iter       — cache lines moved per iteration
+//   instrs_per_cl     — VMEM instructions to move one cache line (load-width
+//                       dependent; note: per cache line, not per iteration)
+//   elements_per_iter — elements reduced per iteration (VALU term only)
+struct iter_dims_t {
   int cl_per_iter;
   int instrs_per_cl;
   int elements_per_iter;
@@ -69,13 +75,13 @@ struct resolve_args_t {
 // hierarchy), plus the VMEM issue slots to actually move it
 // (cl_per_iter × instrs_per_cl, where instrs_per_cl depends on load width).
 struct load_t {
-  constexpr functional_unit_work_t resolve(const resolve_args_t& a) const noexcept {
+  constexpr functional_unit_work_t resolve(const iter_dims_t& iter) const noexcept {
     functional_unit_work_t w{};
-    w.vmem_read_instrs = static_cast<std::int64_t>(a.cl_per_iter) * a.instrs_per_cl;
-    w.tcp_read_cl      = a.cl_per_iter;
-    w.l2_read_cl       = a.cl_per_iter;
-    w.mall_read_cl     = a.cl_per_iter;
-    w.hbm_read_cl      = a.cl_per_iter;
+    w.vmem_read_instrs = static_cast<std::int64_t>(iter.cl_per_iter) * iter.instrs_per_cl;
+    w.tcp_read_cl      = iter.cl_per_iter;
+    w.l2_read_cl       = iter.cl_per_iter;
+    w.mall_read_cl     = iter.cl_per_iter;
+    w.hbm_read_cl      = iter.cl_per_iter;
     return w;
   }
 };
@@ -88,13 +94,13 @@ struct load_t {
 struct store_t {
   bool write_through = false;
 
-  constexpr functional_unit_work_t resolve(const resolve_args_t& a) const noexcept {
+  constexpr functional_unit_work_t resolve(const iter_dims_t& iter) const noexcept {
     functional_unit_work_t w{};
-    w.vmem_write_instrs = static_cast<std::int64_t>(a.cl_per_iter) * a.instrs_per_cl;
-    w.tcp_write_cl      = a.cl_per_iter;
-    w.l2_write_cl       = write_through ? 0 : static_cast<std::int64_t>(a.cl_per_iter);
-    w.mall_write_cl     = a.cl_per_iter;
-    w.hbm_write_cl      = a.cl_per_iter;
+    w.vmem_write_instrs = static_cast<std::int64_t>(iter.cl_per_iter) * iter.instrs_per_cl;
+    w.tcp_write_cl      = iter.cl_per_iter;
+    w.l2_write_cl       = write_through ? 0 : static_cast<std::int64_t>(iter.cl_per_iter);
+    w.mall_write_cl     = iter.cl_per_iter;
+    w.hbm_write_cl      = iter.cl_per_iter;
     return w;
   }
 };
@@ -107,12 +113,12 @@ struct store_t {
 struct pull_t {
   int peer = 0;
 
-  constexpr functional_unit_work_t resolve(const resolve_args_t& a) const noexcept {
+  constexpr functional_unit_work_t resolve(const iter_dims_t& iter) const noexcept {
     functional_unit_work_t w{};
-    w.vmem_read_instrs = static_cast<std::int64_t>(a.cl_per_iter) * a.instrs_per_cl;
-    w.tcp_read_cl      = a.cl_per_iter;
-    w.l2_read_cl       = a.cl_per_iter;
-    w.xgmi_read_cl     = a.cl_per_iter;
+    w.vmem_read_instrs = static_cast<std::int64_t>(iter.cl_per_iter) * iter.instrs_per_cl;
+    w.tcp_read_cl      = iter.cl_per_iter;
+    w.l2_read_cl       = iter.cl_per_iter;
+    w.xgmi_read_cl     = iter.cl_per_iter;
     return w;
   }
 };
@@ -125,14 +131,14 @@ struct pull_t {
 struct push_t {
   int peer = 0;
 
-  constexpr functional_unit_work_t resolve(const resolve_args_t& a) const noexcept {
+  constexpr functional_unit_work_t resolve(const iter_dims_t& iter) const noexcept {
     functional_unit_work_t w{};
-    w.vmem_read_instrs = static_cast<std::int64_t>(a.cl_per_iter) * a.instrs_per_cl;
-    w.tcp_read_cl      = a.cl_per_iter;
-    w.l2_read_cl       = a.cl_per_iter;
-    w.mall_read_cl     = a.cl_per_iter;
-    w.hbm_read_cl      = a.cl_per_iter;
-    w.xgmi_write_cl    = a.cl_per_iter;
+    w.vmem_read_instrs = static_cast<std::int64_t>(iter.cl_per_iter) * iter.instrs_per_cl;
+    w.tcp_read_cl      = iter.cl_per_iter;
+    w.l2_read_cl       = iter.cl_per_iter;
+    w.mall_read_cl     = iter.cl_per_iter;
+    w.hbm_read_cl      = iter.cl_per_iter;
+    w.xgmi_write_cl    = iter.cl_per_iter;
     return w;
   }
 };
@@ -145,9 +151,9 @@ struct push_t {
 struct reduce_t {
   reduce_op_t op = reduce_op_t::SUM;
 
-  constexpr functional_unit_work_t resolve(const resolve_args_t& a) const noexcept {
+  constexpr functional_unit_work_t resolve(const iter_dims_t& iter) const noexcept {
     functional_unit_work_t w{};
-    w.valu_ops = a.elements_per_iter;
+    w.valu_ops = iter.elements_per_iter;
     return w;
   }
 };
@@ -160,7 +166,7 @@ struct reduce_t {
 struct signal_t {
   int peer = 0;
 
-  constexpr functional_unit_work_t resolve(const resolve_args_t&) const noexcept {
+  constexpr functional_unit_work_t resolve(const iter_dims_t&) const noexcept {
     functional_unit_work_t w{};
     w.atomic_count  = 1;
     w.xgmi_write_cl = 1;
@@ -176,7 +182,7 @@ struct signal_t {
 struct wait_t {
   int peer = 0;
 
-  constexpr functional_unit_work_t resolve(const resolve_args_t&) const noexcept {
+  constexpr functional_unit_work_t resolve(const iter_dims_t&) const noexcept {
     functional_unit_work_t w{};
     w.atomic_count = 1;
     w.l2_read_cl   = 1;
@@ -203,13 +209,13 @@ struct resolved_work_t {
 };
 
 inline resolved_work_t resolve_work_graph(const std::vector<op_t>& ops,
-                                          const resolve_args_t& args) noexcept {
+                                          const iter_dims_t& iter) noexcept {
   resolved_work_t out{};
   for (const op_t& op : ops) {
     std::visit(
         [&](const auto& concrete) {
           using T                        = std::decay_t<decltype(concrete)>;
-          const functional_unit_work_t w = concrete.resolve(args);
+          const functional_unit_work_t w = concrete.resolve(iter);
           if constexpr (std::is_same_v<T, signal_t> || std::is_same_v<T, wait_t>) {
             out.sync_work += w;
           } else {
@@ -226,7 +232,7 @@ inline resolved_work_t resolve_work_graph(const std::vector<op_t>& ops,
                                           int cl_per_iter,
                                           int instrs_per_cl,
                                           int elements_per_iter) noexcept {
-  return resolve_work_graph(ops, resolve_args_t{cl_per_iter, instrs_per_cl, elements_per_iter});
+  return resolve_work_graph(ops, iter_dims_t{cl_per_iter, instrs_per_cl, elements_per_iter});
 }
 
 }  // namespace origami::comm

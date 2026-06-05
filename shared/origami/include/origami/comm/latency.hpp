@@ -265,7 +265,7 @@ inline wg_tile_latency_breakdown_t compute_wg_tile_latency(
 
   const auto resolved = resolve_work_graph(
       work_graph,
-      resolve_args_t{
+      iter_dims_t{
           static_cast<int>(cl_per_iter), instrs_per_cl, static_cast<int>(elements_per_iter)});
 
   const int active_cus = active_cus_opt.value_or(config.num_wgs);

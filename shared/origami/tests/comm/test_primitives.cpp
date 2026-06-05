@@ -37,13 +37,13 @@ using namespace origami::comm;
 //   bytes_per_iter = vgprs_for_data * 4 = 128 * 4 = 512 → cl_per_iter = 8
 //   load_width = DWORDX16 → instrs_per_cl = 64 / 64 = 1
 //   elements_per_iter = 256 (BF16 — chosen so we can verify VALU counts)
-inline constexpr resolve_args_t kArgs{/*cl_per_iter=*/8,
-                                      /*instrs_per_cl=*/1,
-                                      /*elements_per_iter=*/256};
+inline constexpr iter_dims_t kIter{/*cl_per_iter=*/8,
+                                   /*instrs_per_cl=*/1,
+                                   /*elements_per_iter=*/256};
 
 // ─── Individual primitives ─────────────────────────────────────
 TEST(load_resolves_full_read_path) {
-  const auto w = load_t{}.resolve(kArgs);
+  const auto w = load_t{}.resolve(kIter);
   CHECK(w.vmem_read_instrs == 8);  // 8 cl × 1 instr/cl
   CHECK(w.tcp_read_cl == 8);
   CHECK(w.l2_read_cl == 8);
@@ -58,7 +58,7 @@ TEST(load_resolves_full_read_path) {
 }
 
 TEST(store_default_writes_through_all_levels) {
-  const auto w = store_t{}.resolve(kArgs);
+  const auto w = store_t{}.resolve(kIter);
   CHECK(w.vmem_write_instrs == 8);
   CHECK(w.tcp_write_cl == 8);
   CHECK(w.l2_write_cl == 8);  // not write-through → L2 charged
@@ -67,7 +67,7 @@ TEST(store_default_writes_through_all_levels) {
 }
 
 TEST(store_write_through_skips_l2) {
-  const auto w = store_t{/*write_through=*/true}.resolve(kArgs);
+  const auto w = store_t{/*write_through=*/true}.resolve(kIter);
   CHECK(w.l2_write_cl == 0);
   CHECK(w.tcp_write_cl == 8);
   CHECK(w.mall_write_cl == 8);
@@ -75,7 +75,7 @@ TEST(store_write_through_skips_l2) {
 }
 
 TEST(pull_charges_xgmi_read_not_hbm) {
-  const auto w = pull_t{/*peer=*/3}.resolve(kArgs);
+  const auto w = pull_t{/*peer=*/3}.resolve(kIter);
   CHECK(w.vmem_read_instrs == 8);
   CHECK(w.tcp_read_cl == 8);
   CHECK(w.l2_read_cl == 8);
@@ -85,7 +85,7 @@ TEST(pull_charges_xgmi_read_not_hbm) {
 }
 
 TEST(push_charges_full_read_plus_xgmi_write) {
-  const auto w = push_t{/*peer=*/3}.resolve(kArgs);
+  const auto w = push_t{/*peer=*/3}.resolve(kIter);
   CHECK(w.vmem_read_instrs == 8);
   CHECK(w.tcp_read_cl == 8);
   CHECK(w.l2_read_cl == 8);
@@ -95,14 +95,14 @@ TEST(push_charges_full_read_plus_xgmi_write) {
 }
 
 TEST(reduce_charges_only_valu) {
-  const auto w = reduce_t{/*op=*/reduce_op_t::SUM}.resolve(kArgs);
+  const auto w = reduce_t{/*op=*/reduce_op_t::SUM}.resolve(kIter);
   CHECK(w.valu_ops == 256);
   CHECK(w.vmem_read_instrs == 0);
   CHECK(w.hbm_read_cl == 0);
 }
 
 TEST(signal_one_atomic_and_one_xgmi_write) {
-  const auto w = signal_t{/*peer=*/2}.resolve(kArgs);
+  const auto w = signal_t{/*peer=*/2}.resolve(kIter);
   CHECK(w.atomic_count == 1);
   CHECK(w.xgmi_write_cl == 1);
   CHECK(w.vmem_read_instrs == 0);
@@ -110,7 +110,7 @@ TEST(signal_one_atomic_and_one_xgmi_write) {
 }
 
 TEST(wait_one_atomic_and_one_l2_read) {
-  const auto w = wait_t{/*peer=*/2}.resolve(kArgs);
+  const auto w = wait_t{/*peer=*/2}.resolve(kIter);
   CHECK(w.atomic_count == 1);
   CHECK(w.l2_read_cl == 1);
   CHECK(w.xgmi_read_cl == 0);
@@ -124,7 +124,7 @@ TEST(work_graph_partitions_sync_from_iter) {
       pull_t{/*peer=*/1},
       signal_t{/*peer=*/0},
   };
-  const auto resolved = resolve_work_graph(ops, kArgs);
+  const auto resolved = resolve_work_graph(ops, kIter);
 
   // sync_work: wait_t + signal_t.
   CHECK(resolved.sync_work.atomic_count == 2);
@@ -142,7 +142,7 @@ TEST(work_graph_partitions_sync_from_iter) {
 TEST(work_graph_aggregates_multiple_iter_ops) {
   // Local copy: load_t → store_t (matches a kernel that just memcpys).
   std::vector<op_t> ops = {load_t{}, store_t{}};
-  const auto resolved   = resolve_work_graph(ops, kArgs);
+  const auto resolved   = resolve_work_graph(ops, kIter);
 
   CHECK(resolved.iter_work.vmem_read_instrs == 8);
   CHECK(resolved.iter_work.vmem_write_instrs == 8);
@@ -160,7 +160,7 @@ TEST(work_graph_aggregates_multiple_iter_ops) {
 
 TEST(work_graph_empty_is_zero) {
   std::vector<op_t> ops;
-  const auto resolved = resolve_work_graph(ops, kArgs);
+  const auto resolved = resolve_work_graph(ops, kIter);
   CHECK(resolved.iter_work.vmem_read_instrs == 0);
   CHECK(resolved.iter_work.hbm_read_cl == 0);
   CHECK(resolved.sync_work.atomic_count == 0);
