@@ -3,16 +3,16 @@
 Frozen reference outputs for the `origami::comm` cost model. The byte-identity
 test suite asserts that the C++ model reproduces these values exactly.
 
-## `layouts_grid.csv`
+## `algorithms_grid.csv`
 
-`(layout, num_gpus, pid, timestep, my_rank) → ScheduleEntry` for every
-sampled tuple across 9 layouts × 3 world-sizes (2/4/8). 5,936 rows.
+`(algorithm, num_gpus, pid, timestep, my_rank) → ScheduleEntry` for every
+sampled tuple across 9 algorithms × 3 world-sizes (2/4/8). 5,936 rows.
 
 Columns:
 
 | column     | meaning                                                |
 |------------|--------------------------------------------------------|
-| `layout`   | layout name (e.g. `RingAllGather`)                     |
+| `layout`   | algorithm name (e.g. `RingAllGather`); legacy header   |
 | `num_gpus` | world size                                             |
 | `pid`      | logical workgroup id (0..7 sample)                     |
 | `timestep` | algorithm tick (0..num_timesteps-1)                    |
@@ -23,7 +23,7 @@ Columns:
 | `is_self`  | 0/1 — whether this timestep is local                   |
 | `wg_sig`   | work-graph opcode chain, e.g. `L\|X3\|R`               |
 
-`wg_sig` opcodes (matches `op_sig()` in test_layouts.cpp):
+`wg_sig` opcodes (matches `op_sig()` in test_algorithms.cpp):
 
 ```
 L    Load

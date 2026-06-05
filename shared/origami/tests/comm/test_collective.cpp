@@ -193,7 +193,7 @@ TEST(predict_row_launch_overhead_floor) {
 }
 
 // ─── Smoke: ring layouts use the pipelined path ──────────────────
-TEST(allreduce_uses_two_shot_layout) {
+TEST(allreduce_uses_two_shot_algorithm) {
   // AR default = two_shot (sequential), not ring. Confirms that
   // compute_collective_latency picks the sequential code path —
   // a regression here would surface as a totally different magnitude

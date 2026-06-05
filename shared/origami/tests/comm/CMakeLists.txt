@@ -15,7 +15,7 @@ target_sources(
             "${CMAKE_CURRENT_SOURCE_DIR}/test_hardware.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_heuristics.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_primitives.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test_layouts.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_algorithms.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_latency.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_collective.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_tensor.cpp"

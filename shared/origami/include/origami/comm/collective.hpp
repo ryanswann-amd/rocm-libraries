@@ -49,10 +49,10 @@
 // dominates the sub-kilobyte regime.
 #pragma once
 
+#include "origami/comm/algorithms.hpp"
 #include "origami/comm/hardware.hpp"
 #include "origami/comm/heuristics.hpp"
 #include "origami/comm/latency.hpp"
-#include "origami/comm/layouts.hpp"
 #include "origami/comm/primitives.hpp"
 #include "origami/comm/types.hpp"
 
@@ -68,31 +68,19 @@ namespace origami::comm {
 
 // ─── ring-step heuristic ────────────────────────────────────────
 inline double ring_step_overhead_cycles(primitive_t primitive,
-                                        const collective_layout_t& layout,
+                                        const collective_algorithm_t& algorithm,
                                         const heuristics_t& heur) {
-  if (!layout.is_ring_class()) return 0.0;
+  if (!algorithm.is_ring_class()) return 0.0;
   const double per_step = heur.ring_step_overhead(primitive);
-  return per_step * static_cast<double>(layout.num_timesteps());
+  return per_step * static_cast<double>(algorithm.num_timesteps());
 }
 
-// ─── default layout factory ─────────────────────────────────────
-// Maps each collective operation to its default layout (the implementation
-// the engine uses when comm_config_t::layout is not overridden).
-inline std::unique_ptr<collective_layout_t> default_layout_for(primitive_t collective,
-                                                               int num_gpus) {
-  switch (collective) {
-    case primitive_t::all_gather: return allgather_layout(num_gpus);
-    case primitive_t::reduce_scatter: return reduce_scatter_layout(num_gpus);
-    case primitive_t::all_reduce: return allreduce_two_shot_layout(num_gpus);
-    case primitive_t::all_to_all: return alltoall_layout(num_gpus);
-    case primitive_t::broadcast: return broadcast_layout(num_gpus);
-  }
-  throw std::invalid_argument(std::string{"Unknown collective: "} +
-                              std::string{primitive_name(collective)});
-}
+// The (collective, algorithm) → implementation resolution lives in
+// algorithms.hpp as resolve_algorithm(); compute_collective_latency_for_rank
+// calls it below. No default factory is needed here.
 
 // ─── _compute_ring_latency ──────────────────────────────────────
-inline double compute_ring_latency(const collective_layout_t& layout,
+inline double compute_ring_latency(const collective_algorithm_t& algorithm,
                                    const comm_problem_t& problem,
                                    const comm_config_t& config,
                                    const system_t& system,
@@ -102,7 +90,7 @@ inline double compute_ring_latency(const collective_layout_t& layout,
   const hardware_t& hw           = system.gpu;
   const comm_hardware_t& comm_hw = system.fabric;
   const int N                    = problem.num_gpus;
-  const int num_timesteps        = layout.num_timesteps();
+  const int num_timesteps        = algorithm.num_timesteps();
   const std::size_t CL           = CACHELINE_BYTES;
 
   // A ring moves one chunk per step; over num_timesteps steps each GPU pushes
@@ -110,7 +98,8 @@ inline double compute_ring_latency(const collective_layout_t& layout,
   // total bytes this rank puts on the wire — the numerator of the throughput
   // model.
   const std::size_t gpu_timestep_tile_bytes =
-      problem.gpu_tile_cachelines() * CL / static_cast<std::size_t>(layout.chunks_per_timestep());
+      problem.gpu_tile_cachelines() * CL /
+      static_cast<std::size_t>(algorithm.chunks_per_timestep());
   const std::size_t total_wire_bytes =
       gpu_timestep_tile_bytes * static_cast<std::size_t>(num_timesteps);
 
@@ -131,7 +120,7 @@ inline double compute_ring_latency(const collective_layout_t& layout,
   const double T_transfer = static_cast<double>(total_wire_bytes) / aggregate_bw;
 
   // Sync: count signal_t+wait_t ops in the work graph times atomic_latency_cycles.
-  const auto entry = layout.link_of(/*pid=*/0, /*timestep=*/0, my_rank, N);
+  const auto entry = algorithm.link_of(/*pid=*/0, /*timestep=*/0, my_rank, N);
   int sync_ops     = 0;
   for (const auto& op : entry.work_graph) {
     std::visit(
@@ -156,7 +145,7 @@ inline double compute_ring_latency(const collective_layout_t& layout,
 
   // Per-step proxy/handshake overhead the bandwidth model cannot see (CPU-
   // mediated; empirical, from heuristics).
-  const double T_step_overhead = ring_step_overhead_cycles(primitive, layout, heur);
+  const double T_step_overhead = ring_step_overhead_cycles(primitive, algorithm, heur);
 
   // Fixed launch floor + the throughput-bound transfer + serial sync + per-step
   // overhead. Launch dominates tiny messages; transfer dominates large ones.
@@ -164,7 +153,7 @@ inline double compute_ring_latency(const collective_layout_t& layout,
 }
 
 // ─── _compute_sequential_latency ────────────────────────────────
-inline double compute_sequential_latency(const collective_layout_t& layout,
+inline double compute_sequential_latency(const collective_algorithm_t& algorithm,
                                          const comm_problem_t& problem,
                                          const comm_config_t& config,
                                          const system_t& system,
@@ -174,7 +163,7 @@ inline double compute_sequential_latency(const collective_layout_t& layout,
   const hardware_t& hw           = system.gpu;
   const comm_hardware_t& comm_hw = system.fabric;
   const int N                    = problem.num_gpus;
-  const int chunks_per_timestep  = layout.chunks_per_timestep();
+  const int chunks_per_timestep  = algorithm.chunks_per_timestep();
 
   const tile_shape_t gpu_tile = problem.gpu_tile_shape();
   const tile_shape_t gpu_timestep_tile =
@@ -191,8 +180,8 @@ inline double compute_sequential_latency(const collective_layout_t& layout,
   // timestep, however, the links run in parallel — so a timestep costs the
   // *slowest* link, not their sum (T_link_max below).
   double T_timesteps = 0.0;
-  for (int timestep = 0; timestep < layout.num_timesteps(); ++timestep) {
-    const auto entry = layout.link_of(/*pid=*/0, timestep, my_rank, N);
+  for (int timestep = 0; timestep < algorithm.num_timesteps(); ++timestep) {
+    const auto entry = algorithm.link_of(/*pid=*/0, timestep, my_rank, N);
 
     if (entry.is_self) {
       // A "self" step is a local copy (no peer): bound by local HBM, so the
@@ -215,7 +204,7 @@ inline double compute_sequential_latency(const collective_layout_t& layout,
       // how the eff_wgs workgroups are distributed over them. Each link's WGs
       // share that link's width evenly, and the timestep waits for the most
       // congested link to finish — hence the max over links.
-      const auto link_wg_counts = layout.active_links(timestep, eff_wgs, N);
+      const auto link_wg_counts = algorithm.active_links(timestep, eff_wgs, N);
 
       double T_link_max = 0.0;
       for (const auto& [link_id, wgs_on_link] : link_wg_counts) {
@@ -238,7 +227,7 @@ inline double compute_sequential_latency(const collective_layout_t& layout,
     }
   }
 
-  const double T_step_overhead = ring_step_overhead_cycles(primitive, layout, heur);
+  const double T_step_overhead = ring_step_overhead_cycles(primitive, algorithm, heur);
   return comm_hw.launch_overhead_cycles + T_timesteps + T_step_overhead;
 }
 
@@ -248,37 +237,39 @@ inline double compute_sequential_latency(const collective_layout_t& layout,
 // diverge. Caller converts cycles→µs at the public boundary.
 //
 // The operation comes from problem.collective (what to compute) and the
-// implementation from config.layout (how) — null layout means use the default
-// for the operation. This is the problem/config split: correctness inputs in
-// the problem, performance inputs in the config.
+// implementation from config.algorithm (how) — resolve_algorithm maps that
+// pair to a concrete algorithm (or rejects an invalid pair). A non-null
+// config.algorithm_override bypasses resolution with a caller-supplied object.
+// This is the problem/config split: correctness inputs in the problem,
+// performance inputs in the config.
 inline double compute_collective_latency_for_rank(const comm_problem_t& problem,
                                                   const comm_config_t& config,
                                                   const system_t& system,
                                                   int my_rank,
                                                   const heuristics_t& heur = DEFAULT_HEURISTICS) {
-  std::unique_ptr<collective_layout_t> owned;
-  const collective_layout_t* L = config.layout;
-  if (!L) {
-    owned = default_layout_for(problem.collective, problem.num_gpus);
-    L     = owned.get();
+  std::unique_ptr<collective_algorithm_t> owned;
+  const collective_algorithm_t* A = config.algorithm_override;
+  if (!A) {
+    owned = resolve_algorithm(problem.collective, config.algorithm, problem.num_gpus);
+    A     = owned.get();
   }
 
-  if (L->is_ring_pipeline()) {
-    return compute_ring_latency(*L, problem, config, system, my_rank, heur, problem.collective);
+  if (A->is_ring_pipeline()) {
+    return compute_ring_latency(*A, problem, config, system, my_rank, heur, problem.collective);
   }
-  return compute_sequential_latency(*L, problem, config, system, my_rank, heur, problem.collective);
+  return compute_sequential_latency(*A, problem, config, system, my_rank, heur, problem.collective);
 }
 
 // ─── compute_collective_latency ─────────────────────────────────
 // Predicted GPU cycles for the whole collective. The operation completes only
 // when its slowest participant does, so the cost is the *max* of every rank's
-// timeline — this loop is where rank asymmetry, if any layout ever introduces
-// it, would surface.
+// timeline — this loop is where rank asymmetry, if any algorithm ever
+// introduces it, would surface.
 //
 // Shortcut: with heur.assume_rank_symmetry the loop collapses to rank 0 alone
-// (see heuristics_t — exact for the rank-symmetric layouts we ship today, an
+// (see heuristics_t — exact for the rank-symmetric algorithms we ship today, an
 // N× speedup). Default is the honest max so the engine stays correct for any
-// future asymmetric layout without a flag change.
+// future asymmetric algorithm without a flag change.
 inline double compute_collective_latency(const comm_problem_t& problem,
                                          const comm_config_t& config,
                                          const system_t& system,
@@ -304,7 +295,7 @@ inline double compute_collective_latency(const comm_problem_t& problem,
 // report msg_bytes as the per-rank buffer, but reduce_scatter reports the full
 // pre-scatter buffer, so its per-rank share is msg_bytes / world_size. When no
 // explicit [M,N] shape is given, the buffer is treated as a 1×N row of bf16
-// elements. cl/sync contention, layout, and unit conversion are all delegated;
+// elements. cl/sync contention, algorithm, and unit conversion are all delegated;
 // the cycles→µs conversion happens here, at the boundary.
 inline double predict_row(std::string_view primitive,
                           std::size_t msg_bytes,

@@ -33,7 +33,7 @@
 //   Tensor Collective layer  (shape-aware: tensor + op + dim + W)
 //     ↓ lowers via convention table
 //   Collective layer          (byte-level: primitive + msg_bytes + W + NCH)
-//     ↓ lowers via collective_layout_t
+//     ↓ lowers via collective_algorithm_t
 //   Workgroup layer
 #pragma once
 
@@ -61,7 +61,7 @@ namespace origami::comm {
 // all-reduce is an RS followed by an AG, hence 2(N-1)/N; an all-to-all keeps
 // 1/N locally and ships the rest, (N-1)/N; a broadcast sends each byte once.
 // Exposed for reporting (wire_bytes_per_rank); the cost model derives traffic
-// from the layout, so this is a cross-check, not the source of the prediction.
+// from the algorithm, so this is a cross-check, not the source of the prediction.
 inline double wire_factor(std::string_view op, int world_size) {
   const double n = static_cast<double>(world_size);
   if (op == "all_reduce") return 2.0 * (n - 1.0) / n;

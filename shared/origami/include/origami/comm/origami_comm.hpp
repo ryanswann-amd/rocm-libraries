@@ -31,11 +31,11 @@
 // finer-grained includes.
 #pragma once
 
+#include "origami/comm/algorithms.hpp"
 #include "origami/comm/collective.hpp"
 #include "origami/comm/hardware.hpp"
 #include "origami/comm/heuristics.hpp"
 #include "origami/comm/latency.hpp"
-#include "origami/comm/layouts.hpp"
 #include "origami/comm/primitives.hpp"
 #include "origami/comm/tensor.hpp"
 #include "origami/comm/types.hpp"

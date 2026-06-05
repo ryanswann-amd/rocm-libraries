@@ -57,9 +57,9 @@
 
 namespace origami::comm {
 
-// Forward declaration so comm_config_t can carry a layout-override pointer
-// without including layouts.hpp (which depends on this header).
-class collective_layout_t;
+// Forward declaration so comm_config_t can carry an algorithm-override pointer
+// without including algorithms.hpp (which depends on this header).
+class collective_algorithm_t;
 
 // The CDNA cache line is 64 B: the granularity at which TCP/L2/MALL/HBM and
 // the xGMI fabric tag, fetch, and evict data. All traffic in the model is
@@ -118,7 +118,7 @@ enum class reduce_op_t : std::uint8_t { SUM, MAX, MIN, PROD };
 // Which collective is being performed. This is a property of the *problem*,
 // not the config: it determines the correct result — an all-gather and a
 // reduce-scatter of the same buffer produce different answers — whereas the
-// layout that *implements* it (ring vs two-shot, …) is a performance choice
+// algorithm that *implements* it (ring vs two-shot, …) is a performance choice
 // and therefore lives in comm_config_t. Lives in types.hpp because both the
 // problem type and the heuristics table are keyed by it.
 enum class primitive_t : std::uint8_t {
@@ -143,12 +143,51 @@ constexpr std::string_view primitive_name(primitive_t p) noexcept {
 
 // Parse a canonical name into the enum. Used only at the public string edge
 // (predict_row / predict_tensor_collective); throws on an unknown name, which
-// preserves the original string-keyed layout factory's behaviour.
+// preserves the original string-keyed algorithm factory's behaviour.
 inline primitive_t primitive_from_name(std::string_view name) {
   for (std::size_t i = 0; i < PRIMITIVE_NAMES.size(); ++i) {
     if (PRIMITIVE_NAMES[i] == name) return static_cast<primitive_t>(i);
   }
   throw std::invalid_argument(std::string{"unknown collective: "} + std::string{name});
+}
+
+// ─── algorithm_t: the collective IMPLEMENTATION ────────────────────────
+// How a collective is carried out — the dataflow pattern over the ranks. A
+// performance choice (every valid algorithm yields the same result, just at a
+// different cost), so it lives in comm_config_t, never in the problem.
+//
+// Crucially, an algorithm is only meaningful *for a particular collective*:
+// the (collective, algorithm) pair must be one resolve_algorithm() defines, or
+// it is rejected. `automatic` always resolves to the canonical algorithm for
+// the problem's collective, so the common path needs no explicit choice. The
+// only collective with a real menu today is all_reduce {one_shot, two_shot,
+// ring}; the rest have a single algorithm and accept only automatic (or its
+// explicit name).
+enum class algorithm_t : std::uint8_t {
+  automatic,  // resolve the canonical algorithm for the problem's collective
+  ring,       // neighbour-ring pipeline (all_gather/reduce_scatter/broadcast/all_reduce)
+  one_shot,   // all_reduce: direct gather-and-reduce from every peer
+  two_shot,   // all_reduce: reduce-scatter shot then all-gather shot
+  direct,     // all_to_all: pid-staggered pairwise exchange
+};
+
+inline constexpr std::array<std::string_view, 5> ALGORITHM_NAMES = {
+    "automatic",
+    "ring",
+    "one_shot",
+    "two_shot",
+    "direct",
+};
+
+constexpr std::string_view algorithm_name(algorithm_t a) noexcept {
+  return ALGORITHM_NAMES[static_cast<std::size_t>(a)];
+}
+
+inline algorithm_t algorithm_from_name(std::string_view name) {
+  for (std::size_t i = 0; i < ALGORITHM_NAMES.size(); ++i) {
+    if (ALGORITHM_NAMES[i] == name) return static_cast<algorithm_t>(i);
+  }
+  throw std::invalid_argument(std::string{"unknown algorithm: "} + std::string{name});
 }
 
 // ─── ceil_div: ceil(a/b) for positive integers ─────
@@ -309,11 +348,18 @@ struct comm_config_t {
   int vgprs_for_data      = 128;
   int min_bytes_per_wg    = 16'384;  // default mirrors heuristics_t.min_bytes_per_wg
 
-  // Optional implementation override for the problem's collective. null ⇒ the
-  // engine uses default_layout_for(problem.collective). A performance choice
-  // (same result, different cost), so it belongs in the config, not the
-  // problem. Must implement problem.collective if supplied.
-  const collective_layout_t* layout = nullptr;
+  // Which algorithm implements the problem's collective. `automatic` resolves
+  // to the canonical algorithm for that collective; a named value selects a
+  // specific implementation and is rejected by resolve_algorithm() unless it
+  // is defined for the collective. A performance choice (same result, different
+  // cost), so it belongs in the config, not the problem.
+  algorithm_t algorithm = algorithm_t::automatic;
+
+  // Escape hatch for a caller-supplied custom algorithm object (experiments,
+  // bespoke schedules). When non-null it wins over `algorithm`. It must
+  // correctly implement problem.collective — this pointer bypasses the
+  // (collective, algorithm) validity check that resolve_algorithm() enforces.
+  const collective_algorithm_t* algorithm_override = nullptr;
 
   // Bytes a workgroup moves per software-pipelined iteration = the register
   // budget it dedicates to in-flight data (vgprs_for_data × 4 B/VGPR). This is

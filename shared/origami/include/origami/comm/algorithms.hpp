@@ -26,25 +26,26 @@
 
 // origami::comm — analytical communication cost model
 //
-// Collective layouts: the *schedule* of a collective, expressed as a pure
-// function (pid, timestep) → which link a workgroup uses and what primitives
-// it runs there. This is the bridge between an algorithm and the cost model:
-// the model never hard-codes "all-gather costs X"; it asks the layout for the
-// per-step work graph and lets latency.hpp/collective.hpp price it.
+// Collective algorithms: each algorithm emits the *schedule* of a collective,
+// expressed as a pure function (pid, timestep) → which link a workgroup uses
+// and what primitives it runs there. This is the bridge between an algorithm
+// and the cost model: the model never hard-codes "all-gather costs X"; it asks
+// the algorithm for the per-step work graph and lets latency.hpp /
+// collective.hpp price it.
 //
-// Three quantities a layout exposes drive the whole cost, and each is a direct
-// consequence of the algorithm's dataflow:
+// Three quantities an algorithm exposes drive the whole cost, and each is a
+// direct consequence of the algorithm's dataflow:
 //   • num_timesteps()       — how many dependent communication rounds the
 //     algorithm takes (e.g. a ring visits N-1 peers; two-shot does N reduce
 //     rounds then N-1 broadcast rounds = 2N-1). More steps ⇒ more serial
-//     handshakes and, for sequential layouts, more added latency.
+//     handshakes and, for sequential algorithms, more added latency.
 //   • chunks_per_timestep() — how finely each GPU's tile is sliced per step.
 //     A ring sends 1/N of the buffer per hop (chunks = N); a whole-tile step
 //     sends all of it (chunks = 1). This sets the per-step wire bytes.
 //   • active_links()        — how the workgroups spread across the links lit
 //     up this step, which sets per-link contention.
 //
-// Layouts are closed-form functions over the rank topology, so they hold no
+// Algorithms are closed-form functions over the rank topology, so they hold no
 // per-WG state and fold cheaply; virtual dispatch happens once per collective.
 //
 // Self-timestep distinction: when a step maps a rank to itself, the data is
@@ -59,6 +60,8 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -88,9 +91,9 @@ constexpr int floor_mod(int a, int n) noexcept {
 }
 
 // ─── Base ────────────────────────────────────────────────────────
-class collective_layout_t {
+class collective_algorithm_t {
  public:
-  virtual ~collective_layout_t() = default;
+  virtual ~collective_algorithm_t() = default;
 
   virtual schedule_entry_t link_of(int pid, int timestep, int my_rank, int num_gpus) const = 0;
   virtual int wgs_on_link(int timestep, int num_wgs, int num_gpus) const                   = 0;
@@ -103,26 +106,26 @@ class collective_layout_t {
   // algorithms override (ring, two-shot, a2a → N).
   virtual int chunks_per_timestep() const { return 1; }
 
-  // Layout-kind queries — the two checks the collective engine makes
-  // to identify ring-class layouts.
+  // Algorithm-kind queries — the two checks the collective engine makes
+  // to identify ring-class algorithms.
   //
   //   is_ring_class()    — eligible for per-step proxy/sync overhead
   //                        heuristic. Covers AG, RS, ring AR, ring fixed.
   //   is_ring_pipeline() — uses the closed-form pipelined-ring
   //                        throughput model rather than per-timestep
   //                        wg_tile sums. Covers ring AR + ring fixed
-  //                        (the layouts whose work graph carries
+  //                        (the algorithms whose work graph carries
   //                        signal_t/wait_t ops).
   virtual bool is_ring_class() const { return false; }
   virtual bool is_ring_pipeline() const { return false; }
 };
 
-// ─── all_to_same_layout_t ────────────────────────────────────────────
+// ─── all_to_same_algorithm_t ────────────────────────────────────────────
 // All WGs → same link each timestep. Used by one_shot AR + A2A
 // (sequential). Skips self; visits N-1 remote peers.
-class all_to_same_layout_t : public collective_layout_t {
+class all_to_same_algorithm_t : public collective_algorithm_t {
  public:
-  explicit all_to_same_layout_t(int num_gpus, work_graph_fn_t wg_fn = {})
+  explicit all_to_same_algorithm_t(int num_gpus, work_graph_fn_t wg_fn = {})
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
   schedule_entry_t link_of(int /*pid*/, int timestep, int my_rank, int num_gpus) const override {
@@ -157,12 +160,12 @@ class all_to_same_layout_t : public collective_layout_t {
   work_graph_fn_t wg_fn_;
 };
 
-// ─── pid_staggered_layout_t ─────────────────────────────────────────
+// ─── pid_staggered_algorithm_t ─────────────────────────────────────────
 // pid % world_size offsets starting peer; WGs spread uniformly. Used
 // by two-shot AR/RS and a2a. Includes a self-timestep.
-class pid_staggered_layout_t : public collective_layout_t {
+class pid_staggered_algorithm_t : public collective_algorithm_t {
  public:
-  explicit pid_staggered_layout_t(int num_gpus, work_graph_fn_t wg_fn = {})
+  explicit pid_staggered_algorithm_t(int num_gpus, work_graph_fn_t wg_fn = {})
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
   schedule_entry_t link_of(int pid, int timestep, int my_rank, int num_gpus) const override {
@@ -207,11 +210,11 @@ class pid_staggered_layout_t : public collective_layout_t {
   work_graph_fn_t wg_fn_;
 };
 
-// ─── pid_partitioned_layout_t ───────────────────────────────────────
+// ─── pid_partitioned_algorithm_t ───────────────────────────────────────
 // Each WG permanently assigned to one link (partitioned AG).
-class pid_partitioned_layout_t : public collective_layout_t {
+class pid_partitioned_algorithm_t : public collective_algorithm_t {
  public:
-  explicit pid_partitioned_layout_t(int num_gpus, work_graph_fn_t wg_fn = {})
+  explicit pid_partitioned_algorithm_t(int num_gpus, work_graph_fn_t wg_fn = {})
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
   schedule_entry_t link_of(int pid, int /*timestep*/, int my_rank, int num_gpus) const override {
@@ -275,11 +278,11 @@ inline int ring_wgs_per_link(int num_wgs, int num_gpus) noexcept {
   return std::max(num_wgs / nrings, 1);
 }
 
-// ─── ring_fixed_layout_t ────────────────────────────────────────────
+// ─── ring_fixed_algorithm_t ────────────────────────────────────────────
 // All hops to next_rank. Used by ring AR (older form).
-class ring_fixed_layout_t : public collective_layout_t {
+class ring_fixed_algorithm_t : public collective_algorithm_t {
  public:
-  explicit ring_fixed_layout_t(int num_gpus, work_graph_fn_t wg_fn = {})
+  explicit ring_fixed_algorithm_t(int num_gpus, work_graph_fn_t wg_fn = {})
       : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
   schedule_entry_t link_of(int /*pid*/,
@@ -321,11 +324,11 @@ class ring_fixed_layout_t : public collective_layout_t {
   work_graph_fn_t wg_fn_;
 };
 
-// ─── ring_all_gather_layout_t ────────────────────────────────────────
+// ─── ring_all_gather_algorithm_t ────────────────────────────────────────
 // N-1 step ring. Each step: load_t (local) + store_t (local) + push_t (fwd).
-class ring_all_gather_layout_t : public collective_layout_t {
+class ring_all_gather_algorithm_t : public collective_algorithm_t {
  public:
-  explicit ring_all_gather_layout_t(int num_gpus) : num_gpus_{num_gpus} {}
+  explicit ring_all_gather_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
   schedule_entry_t link_of(int /*pid*/,
                            int /*timestep*/,
@@ -355,11 +358,11 @@ class ring_all_gather_layout_t : public collective_layout_t {
   int num_gpus_;
 };
 
-// ─── ring_reduce_scatter_layout_t ────────────────────────────────────
+// ─── ring_reduce_scatter_algorithm_t ────────────────────────────────────
 // Structurally identical to AG ring + reduce_t.
-class ring_reduce_scatter_layout_t : public collective_layout_t {
+class ring_reduce_scatter_algorithm_t : public collective_algorithm_t {
  public:
-  explicit ring_reduce_scatter_layout_t(int num_gpus) : num_gpus_{num_gpus} {}
+  explicit ring_reduce_scatter_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
   schedule_entry_t link_of(int /*pid*/,
                            int /*timestep*/,
@@ -388,16 +391,16 @@ class ring_reduce_scatter_layout_t : public collective_layout_t {
   int num_gpus_;
 };
 
-// ─── two_shot_all_reduce_layout_t ─────────────────────────────────────
+// ─── two_shot_all_reduce_algorithm_t ─────────────────────────────────────
 // All-reduce factored as reduce-scatter then all-gather ("two shots"): each
 // rank first pulls and sums every peer's slice (N reduce steps, including its
 // own self-step), then pushes the finished slice out to all others (N-1
 // broadcast steps). Hence num_timesteps = 2N-1 and each step moves 1/N of the
 // buffer (chunks_per_timestep = N). is_reduce_phase_ just splits the timeline
 // at step N into the two shots.
-class two_shot_all_reduce_layout_t : public collective_layout_t {
+class two_shot_all_reduce_algorithm_t : public collective_algorithm_t {
  public:
-  explicit two_shot_all_reduce_layout_t(int num_gpus) : num_gpus_{num_gpus} {}
+  explicit two_shot_all_reduce_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
   schedule_entry_t link_of(int pid, int timestep, int my_rank, int num_gpus) const override {
     const int N     = num_gpus;
@@ -445,7 +448,7 @@ class two_shot_all_reduce_layout_t : public collective_layout_t {
   int num_gpus_;
 };
 
-// ─── ring_all_reduce_layout_t ────────────────────────────────────────
+// ─── ring_all_reduce_algorithm_t ────────────────────────────────────────
 // The bandwidth-optimal all-reduce: a reduce-scatter ring (N-1 steps, each
 // pulls from prev, sums, signals next) followed by an all-gather ring (N-1
 // steps, each pulls the finished slice and forwards it). 2(N-1) steps total,
@@ -453,9 +456,9 @@ class two_shot_all_reduce_layout_t : public collective_layout_t {
 // pipelined ring (is_ring_pipeline) priced by aggregate throughput, not a sum
 // of per-step latencies. The wait_t/signal_t in the work graph are the
 // producer→consumer dependency that serializes adjacent ranks within a step.
-class ring_all_reduce_layout_t : public collective_layout_t {
+class ring_all_reduce_algorithm_t : public collective_algorithm_t {
  public:
-  explicit ring_all_reduce_layout_t(int num_gpus) : num_gpus_{num_gpus} {}
+  explicit ring_all_reduce_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
   schedule_entry_t link_of(int /*pid*/, int timestep, int my_rank, int num_gpus) const override {
     const int next_rank = floor_mod(my_rank + 1, num_gpus);
@@ -495,11 +498,11 @@ class ring_all_reduce_layout_t : public collective_layout_t {
   int num_gpus_;
 };
 
-// ─── ring_broadcast_layout_t ────────────────────────────────────────
+// ─── ring_broadcast_algorithm_t ────────────────────────────────────────
 // N-1 hop pipeline on 1 link. Each GPU: load_t + store_t + push_t.
-class ring_broadcast_layout_t : public collective_layout_t {
+class ring_broadcast_algorithm_t : public collective_algorithm_t {
  public:
-  explicit ring_broadcast_layout_t(int num_gpus) : num_gpus_{num_gpus} {}
+  explicit ring_broadcast_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
   schedule_entry_t link_of(int /*pid*/,
                            int /*timestep*/,
@@ -528,42 +531,85 @@ class ring_broadcast_layout_t : public collective_layout_t {
 };
 
 // ─── Standard collective constructors ───────────────────────────
-// Free-function layout builders.
+// Free-function algorithm builders.
 
-inline std::unique_ptr<collective_layout_t> allgather_layout(int num_gpus) {
-  return std::make_unique<ring_all_gather_layout_t>(num_gpus);
+inline std::unique_ptr<collective_algorithm_t> allgather_algorithm(int num_gpus) {
+  return std::make_unique<ring_all_gather_algorithm_t>(num_gpus);
 }
 
-inline std::unique_ptr<collective_layout_t> reduce_scatter_layout(int num_gpus) {
-  return std::make_unique<ring_reduce_scatter_layout_t>(num_gpus);
+inline std::unique_ptr<collective_algorithm_t> reduce_scatter_algorithm(int num_gpus) {
+  return std::make_unique<ring_reduce_scatter_algorithm_t>(num_gpus);
 }
 
-inline std::unique_ptr<collective_layout_t> broadcast_layout(int num_gpus) {
-  return std::make_unique<ring_broadcast_layout_t>(num_gpus);
+inline std::unique_ptr<collective_algorithm_t> broadcast_algorithm(int num_gpus) {
+  return std::make_unique<ring_broadcast_algorithm_t>(num_gpus);
 }
 
-inline std::unique_ptr<collective_layout_t> allreduce_one_shot_layout(int num_gpus) {
+inline std::unique_ptr<collective_algorithm_t> allreduce_one_shot_algorithm(int num_gpus) {
   auto wg = [](int peer, int /*my_rank*/, int /*N*/, bool is_self) -> std::vector<op_t> {
     if (is_self) return {load_t{}, reduce_t{}};
     return {pull_t{peer}, reduce_t{}};
   };
-  return std::make_unique<all_to_same_layout_t>(num_gpus, wg);
+  return std::make_unique<all_to_same_algorithm_t>(num_gpus, wg);
 }
 
-inline std::unique_ptr<collective_layout_t> allreduce_two_shot_layout(int num_gpus) {
-  return std::make_unique<two_shot_all_reduce_layout_t>(num_gpus);
+inline std::unique_ptr<collective_algorithm_t> allreduce_two_shot_algorithm(int num_gpus) {
+  return std::make_unique<two_shot_all_reduce_algorithm_t>(num_gpus);
 }
 
-inline std::unique_ptr<collective_layout_t> allreduce_ring_layout(int num_gpus) {
-  return std::make_unique<ring_all_reduce_layout_t>(num_gpus);
+inline std::unique_ptr<collective_algorithm_t> allreduce_ring_algorithm(int num_gpus) {
+  return std::make_unique<ring_all_reduce_algorithm_t>(num_gpus);
 }
 
-inline std::unique_ptr<collective_layout_t> alltoall_layout(int num_gpus) {
+inline std::unique_ptr<collective_algorithm_t> alltoall_algorithm(int num_gpus) {
   auto wg = [](int peer, int /*my_rank*/, int /*N*/, bool is_self) -> std::vector<op_t> {
     if (is_self) return {load_t{}, store_t{}};
     return {load_t{}, push_t{peer}};
   };
-  return std::make_unique<pid_staggered_layout_t>(num_gpus, wg);
+  return std::make_unique<pid_staggered_algorithm_t>(num_gpus, wg);
+}
+
+// ─── resolve_algorithm ───────────────────────────────────────────
+// The (collective, algorithm) → implementation factory, and the single place
+// the validity rule lives: an algorithm is a valid config only if it is
+// defined for the problem's collective. `automatic` maps to each collective's
+// canonical algorithm (preserving the historical defaults); a named value
+// selects a specific one and any undefined (collective, algorithm) pair throws
+// rather than silently costing a nonsense schedule.
+//
+//   all_gather / reduce_scatter / broadcast : ring only
+//   all_reduce                              : two_shot (default), one_shot, ring
+//   all_to_all                              : direct (pid-staggered) only
+inline std::unique_ptr<collective_algorithm_t> resolve_algorithm(primitive_t collective,
+                                                                 algorithm_t algorithm,
+                                                                 int num_gpus) {
+  const bool automatic = (algorithm == algorithm_t::automatic);
+  switch (collective) {
+    case primitive_t::all_gather:
+      if (automatic || algorithm == algorithm_t::ring) return allgather_algorithm(num_gpus);
+      break;
+    case primitive_t::reduce_scatter:
+      if (automatic || algorithm == algorithm_t::ring) return reduce_scatter_algorithm(num_gpus);
+      break;
+    case primitive_t::broadcast:
+      if (automatic || algorithm == algorithm_t::ring) return broadcast_algorithm(num_gpus);
+      break;
+    case primitive_t::all_reduce:
+      switch (algorithm) {
+        case algorithm_t::automatic:
+        case algorithm_t::two_shot: return allreduce_two_shot_algorithm(num_gpus);
+        case algorithm_t::one_shot: return allreduce_one_shot_algorithm(num_gpus);
+        case algorithm_t::ring: return allreduce_ring_algorithm(num_gpus);
+        default: break;
+      }
+      break;
+    case primitive_t::all_to_all:
+      if (automatic || algorithm == algorithm_t::direct) return alltoall_algorithm(num_gpus);
+      break;
+  }
+  throw std::invalid_argument(std::string{"algorithm '"} + std::string{algorithm_name(algorithm)} +
+                              "' is not a valid implementation of collective '" +
+                              std::string{primitive_name(collective)} + "'");
 }
 
 }  // namespace origami::comm

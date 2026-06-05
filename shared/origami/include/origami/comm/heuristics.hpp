@@ -99,13 +99,13 @@ struct heuristics_t {
   // ── Rank-symmetry shortcut ──────────────────────────────────
   // A collective finishes only when its *slowest* rank finishes, so the honest
   // cost is the max latency over all ranks. compute_collective_latency takes
-  // that max by default. Every layout shipped today is rank-symmetric in cost
-  // (each rank's is_self/peer schedule has the same shape, just rotated), so
-  // the max equals rank 0 — but that is a property of the current layouts, not
-  // a guarantee. Setting this true asserts the symmetry and evaluates rank 0
-  // only, an N× speedup that is exact for symmetric layouts and an
-  // approximation for any future asymmetric one. Left false so the engine is
-  // correct by construction for layouts we have not yet written.
+  // that max by default. Every algorithm shipped today is rank-symmetric in
+  // cost (each rank's is_self/peer schedule has the same shape, just rotated),
+  // so the max equals rank 0 — but that is a property of the current
+  // algorithms, not a guarantee. Setting this true asserts the symmetry and
+  // evaluates rank 0 only, an N× speedup that is exact for symmetric algorithms
+  // and an approximation for any future asymmetric one. Left false so the
+  // engine is correct by construction for algorithms we have not yet written.
   bool assume_rank_symmetry = false;
 
   // ── framework_t overhead floor (nanoseconds, HOST wall time) ──

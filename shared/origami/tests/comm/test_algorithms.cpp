@@ -24,13 +24,13 @@
  *
  *******************************************************************************/
 
-// Layout byte-identity regression. The harness loads
-// golden/layouts_grid.csv (the frozen reference oracle) and verifies every
-// schedule_entry_t across 5,936 (layout, num_gpus, pid, timestep, my_rank)
-// tuples matches the C++ layout's link_of() exactly.
+// Algorithm byte-identity regression. The harness loads
+// golden/algorithms_grid.csv (the frozen reference oracle) and verifies every
+// schedule_entry_t across 5,936 (algorithm, num_gpus, pid, timestep, my_rank)
+// tuples matches the C++ algorithm's link_of() exactly.
 //
 // CSV columns:
-//   layout,num_gpus,pid,timestep,my_rank,link_id,peer_rank,direction,
+//   algorithm,num_gpus,pid,timestep,my_rank,link_id,peer_rank,direction,
 //   is_self,wg_sig
 //
 // `wg_sig` is a compact opcode chain like "L|X3|R" stored in the golden
@@ -38,7 +38,7 @@
 // schedule_entry_t::work_graph and string-compare.
 #include "test_harness.hpp"
 
-#include "origami/comm/layouts.hpp"
+#include "origami/comm/algorithms.hpp"
 #include "origami/comm/primitives.hpp"
 
 #include <cstdio>
@@ -81,26 +81,26 @@ std::string wg_sig(const std::vector<op_t>& ops) {
 
 std::string direction_str(direction_t d) { return d == direction_t::PUSH ? "push" : "pull"; }
 
-// ─── Layout factory ─────────────────────────────────────────────
-std::unique_ptr<collective_layout_t> make_layout(const std::string& name, int N) {
-  if (name == "RingAllGather") return allgather_layout(N);
-  if (name == "RingReduceScatter") return reduce_scatter_layout(N);
-  if (name == "RingBroadcast") return broadcast_layout(N);
-  if (name == "AROneShot") return allreduce_one_shot_layout(N);
-  if (name == "ARTwoShot") return allreduce_two_shot_layout(N);
-  if (name == "ARRing") return allreduce_ring_layout(N);
-  if (name == "AllToAll") return alltoall_layout(N);
-  if (name == "PidPartitioned") return std::make_unique<pid_partitioned_layout_t>(N);
-  if (name == "RingFixed") return std::make_unique<ring_fixed_layout_t>(N);
+// ─── Algorithm factory ──────────────────────────────────────────
+std::unique_ptr<collective_algorithm_t> make_algorithm(const std::string& name, int N) {
+  if (name == "RingAllGather") return allgather_algorithm(N);
+  if (name == "RingReduceScatter") return reduce_scatter_algorithm(N);
+  if (name == "RingBroadcast") return broadcast_algorithm(N);
+  if (name == "AROneShot") return allreduce_one_shot_algorithm(N);
+  if (name == "ARTwoShot") return allreduce_two_shot_algorithm(N);
+  if (name == "ARRing") return allreduce_ring_algorithm(N);
+  if (name == "AllToAll") return alltoall_algorithm(N);
+  if (name == "PidPartitioned") return std::make_unique<pid_partitioned_algorithm_t>(N);
+  if (name == "RingFixed") return std::make_unique<ring_fixed_algorithm_t>(N);
   return nullptr;
 }
 
-// Cache layouts by (name, num_gpus) so we don't rebuild 5k times.
-const collective_layout_t& cached_layout(const std::string& name, int N) {
-  static std::unordered_map<std::string, std::unique_ptr<collective_layout_t>> cache;
+// Cache algorithms by (name, num_gpus) so we don't rebuild 5k times.
+const collective_algorithm_t& cached_algorithm(const std::string& name, int N) {
+  static std::unordered_map<std::string, std::unique_ptr<collective_algorithm_t>> cache;
   const std::string key = name + ":" + std::to_string(N);
   auto it               = cache.find(key);
-  if (it == cache.end()) { it = cache.emplace(key, make_layout(name, N)).first; }
+  if (it == cache.end()) { it = cache.emplace(key, make_algorithm(name, N)).first; }
   return *it->second;
 }
 
@@ -116,12 +116,12 @@ std::vector<std::string> split_csv(const std::string& line) {
 }  // namespace
 
 // ─── Test: load CSV and compare every row ───────────────────────
-TEST(layouts_match_golden_grid) {
-  const char* path = "golden/layouts_grid.csv";  // run from build/tests/
+TEST(algorithms_match_golden_grid) {
+  const char* path = "golden/algorithms_grid.csv";  // run from build/tests/
   std::ifstream in{path};
   if (!in) {
     // CI invocations sometimes set cwd elsewhere; try the source-tree path.
-    in.open("../../tests/golden/layouts_grid.csv");
+    in.open("../../tests/golden/algorithms_grid.csv");
   }
   CHECK(in.is_open());
   if (!in.is_open()) return;
@@ -135,18 +135,18 @@ TEST(layouts_match_golden_grid) {
     if (line.empty()) continue;
     const auto f = split_csv(line);
     if (f.size() < 10) continue;
-    const std::string layout  = f[0];
-    const int num_gpus        = std::stoi(f[1]);
-    const int pid             = std::stoi(f[2]);
-    const int timestep        = std::stoi(f[3]);
-    const int my_rank         = std::stoi(f[4]);
-    const int exp_link        = std::stoi(f[5]);
-    const int exp_peer        = std::stoi(f[6]);
-    const std::string exp_dir = f[7];
-    const bool exp_self       = (std::stoi(f[8]) != 0);
-    const std::string exp_sig = f[9];
+    const std::string algorithm = f[0];
+    const int num_gpus          = std::stoi(f[1]);
+    const int pid               = std::stoi(f[2]);
+    const int timestep          = std::stoi(f[3]);
+    const int my_rank           = std::stoi(f[4]);
+    const int exp_link          = std::stoi(f[5]);
+    const int exp_peer          = std::stoi(f[6]);
+    const std::string exp_dir   = f[7];
+    const bool exp_self         = (std::stoi(f[8]) != 0);
+    const std::string exp_sig   = f[9];
 
-    const auto& L = cached_layout(layout, num_gpus);
+    const auto& L = cached_algorithm(algorithm, num_gpus);
     const auto se = L.link_of(pid, timestep, my_rank, num_gpus);
 
     ++rows;
@@ -158,7 +158,7 @@ TEST(layouts_match_golden_grid) {
                      "  MISMATCH %s N=%d pid=%d ts=%d r=%d:\n"
                      "    expected: link=%d peer=%d dir=%s self=%d wg=%s\n"
                      "    got     : link=%d peer=%d dir=%s self=%d wg=%s\n",
-                     layout.c_str(),
+                     algorithm.c_str(),
                      num_gpus,
                      pid,
                      timestep,
@@ -177,39 +177,39 @@ TEST(layouts_match_golden_grid) {
       ++mismatches;
     }
   }
-  std::printf("  layouts_grid: %zu rows, %zu mismatches\n", rows, mismatches);
+  std::printf("  algorithms_grid: %zu rows, %zu mismatches\n", rows, mismatches);
   CHECK(rows > 5000);
   CHECK(mismatches == 0);
 }
 
 // ─── Spot-checks on chunks_per_timestep + num_timesteps ─────────
-TEST(layout_num_timesteps_matches_reference) {
+TEST(algorithm_num_timesteps_matches_reference) {
   // RingAllGather: N-1
-  CHECK(allgather_layout(8)->num_timesteps() == 7);
-  CHECK(reduce_scatter_layout(8)->num_timesteps() == 7);
-  CHECK(broadcast_layout(8)->num_timesteps() == 7);
-  // OneShot AR: N-1 (all_to_same_layout_t skips self)
-  CHECK(allreduce_one_shot_layout(8)->num_timesteps() == 7);
+  CHECK(allgather_algorithm(8)->num_timesteps() == 7);
+  CHECK(reduce_scatter_algorithm(8)->num_timesteps() == 7);
+  CHECK(broadcast_algorithm(8)->num_timesteps() == 7);
+  // OneShot AR: N-1 (all_to_same_algorithm_t skips self)
+  CHECK(allreduce_one_shot_algorithm(8)->num_timesteps() == 7);
   // TwoShot AR: 2N-1
-  CHECK(allreduce_two_shot_layout(8)->num_timesteps() == 15);
+  CHECK(allreduce_two_shot_algorithm(8)->num_timesteps() == 15);
   // Ring AR: 2(N-1)
-  CHECK(allreduce_ring_layout(8)->num_timesteps() == 14);
+  CHECK(allreduce_ring_algorithm(8)->num_timesteps() == 14);
   // AllToAll (PidStaggered): N timesteps
-  CHECK(alltoall_layout(8)->num_timesteps() == 8);
+  CHECK(alltoall_algorithm(8)->num_timesteps() == 8);
   // PidPartitioned: 1
-  pid_partitioned_layout_t pp{8};
+  pid_partitioned_algorithm_t pp{8};
   CHECK(pp.num_timesteps() == 1);
 }
 
-TEST(layout_chunks_per_timestep_matches_reference) {
-  CHECK(allgather_layout(8)->chunks_per_timestep() == 1);
-  CHECK(reduce_scatter_layout(8)->chunks_per_timestep() == 1);
-  CHECK(broadcast_layout(8)->chunks_per_timestep() == 8);
-  CHECK(allreduce_two_shot_layout(8)->chunks_per_timestep() == 8);
-  CHECK(allreduce_ring_layout(8)->chunks_per_timestep() == 8);
-  CHECK(alltoall_layout(8)->chunks_per_timestep() == 8);
-  CHECK(allreduce_one_shot_layout(8)->chunks_per_timestep() == 1);  // AllToSame default
-  pid_partitioned_layout_t pp{8};
+TEST(algorithm_chunks_per_timestep_matches_reference) {
+  CHECK(allgather_algorithm(8)->chunks_per_timestep() == 1);
+  CHECK(reduce_scatter_algorithm(8)->chunks_per_timestep() == 1);
+  CHECK(broadcast_algorithm(8)->chunks_per_timestep() == 8);
+  CHECK(allreduce_two_shot_algorithm(8)->chunks_per_timestep() == 8);
+  CHECK(allreduce_ring_algorithm(8)->chunks_per_timestep() == 8);
+  CHECK(alltoall_algorithm(8)->chunks_per_timestep() == 8);
+  CHECK(allreduce_one_shot_algorithm(8)->chunks_per_timestep() == 1);  // AllToSame default
+  pid_partitioned_algorithm_t pp{8};
   CHECK(pp.chunks_per_timestep() == 1);
 }
 
@@ -217,13 +217,45 @@ TEST(layout_chunks_per_timestep_matches_reference) {
 TEST(ring_active_links_conserves_num_wgs) {
   for (int N : {2, 4, 8}) {
     for (int nch : {1, 2, 3, 7, 8, 16, 32}) {
-      auto L  = allgather_layout(N);
+      auto L  = allgather_algorithm(N);
       auto al = L->active_links(/*timestep=*/0, /*num_wgs=*/nch, N);
       int sum = 0;
       for (auto& [k, v] : al) sum += v;
       CHECK(sum == nch);
     }
   }
+}
+
+// ─── resolve_algorithm: (collective, algorithm) validity ───────────
+TEST(resolve_algorithm_selects_all_reduce_variants) {
+  // all_reduce is the only collective with a real menu. automatic == two_shot.
+  CHECK(resolve_algorithm(primitive_t::all_reduce, algorithm_t::automatic, 8)->num_timesteps() ==
+        15);  // 2N-1
+  CHECK(resolve_algorithm(primitive_t::all_reduce, algorithm_t::two_shot, 8)->num_timesteps() ==
+        15);
+  CHECK(resolve_algorithm(primitive_t::all_reduce, algorithm_t::one_shot, 8)->num_timesteps() ==
+        7);  // N-1
+  CHECK(resolve_algorithm(primitive_t::all_reduce, algorithm_t::ring, 8)->num_timesteps() ==
+        14);  // 2(N-1)
+}
+
+TEST(resolve_algorithm_accepts_canonical_and_explicit_names) {
+  // Single-algorithm collectives accept automatic and their one explicit name.
+  CHECK(resolve_algorithm(primitive_t::all_gather, algorithm_t::automatic, 8) != nullptr);
+  CHECK(resolve_algorithm(primitive_t::all_gather, algorithm_t::ring, 8) != nullptr);
+  CHECK(resolve_algorithm(primitive_t::all_to_all, algorithm_t::automatic, 8) != nullptr);
+  CHECK(resolve_algorithm(primitive_t::all_to_all, algorithm_t::direct, 8) != nullptr);
+}
+
+TEST(resolve_algorithm_rejects_invalid_pairs) {
+  // An algorithm not defined for the collective is rejected, not silently
+  // mispriced — this is the structural validity rule.
+  CHECK_THROWS_AS(resolve_algorithm(primitive_t::all_gather, algorithm_t::two_shot, 8),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(resolve_algorithm(primitive_t::all_to_all, algorithm_t::ring, 8),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(resolve_algorithm(primitive_t::broadcast, algorithm_t::one_shot, 8),
+                  std::invalid_argument);
 }
 
 // ─── floor_mod sanity ──────────────────────────────────────────────
