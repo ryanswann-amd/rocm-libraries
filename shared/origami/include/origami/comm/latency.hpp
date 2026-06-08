@@ -67,26 +67,43 @@
 namespace origami::comm {
 
 // ─── iter_times_t: per-FU one-iteration cycle counts ───────────────
-// One cycle count per functional unit for a single iteration. They are held
-// side by side (not summed) precisely because the units overlap: max_cycles()
-// is the roofline bottleneck for the iteration, and bottleneck() reports which
-// unit is binding so a caller can see *why* a transfer is slow.
+/**
+ * @brief Per-functional-unit cycle counts for a single pipelined iteration.
+ *
+ * One cycle count per functional unit for a single iteration. They are held
+ * side by side (not summed) precisely because the units overlap: max_cycles()
+ * is the roofline bottleneck for the iteration, and bottleneck() reports which
+ * unit is binding so a caller can see *why* a transfer is slow.
+ */
 struct iter_times_t {
-  double vmem       = 0.0;
-  double tcp        = 0.0;
-  double l2         = 0.0;
-  double mall       = 0.0;
-  double hbm_read   = 0.0;
-  double hbm_write  = 0.0;
-  double xgmi_read  = 0.0;
-  double xgmi_write = 0.0;
-  double valu       = 0.0;
+  double vmem       = 0.0;  ///< VMEM (vector-memory) instruction-issue time.
+  double tcp        = 0.0;  ///< TCP (L1 vector cache) bandwidth time.
+  double l2         = 0.0;  ///< L2/TCC bandwidth time (scaled by active CUs per XCD).
+  double mall       = 0.0;  ///< MALL (last-level cache) bandwidth time.
+  double hbm_read   = 0.0;  ///< Local HBM read bandwidth time.
+  double hbm_write  = 0.0;  ///< Local HBM write bandwidth time.
+  double xgmi_read  = 0.0;  ///< Remote xGMI read time (latency/MSHR-bound).
+  double xgmi_write = 0.0;  ///< Remote xGMI write time (concentration-bound).
+  double valu       = 0.0;  ///< VALU (vector-ALU) lane-op time, e.g. reductions.
 
+  /**
+   * @brief Roofline bottleneck cycle count for the iteration.
+   *
+   * @return double Largest per-functional-unit cycle count; the units overlap,
+   *         so the iteration is paced by the slowest one.
+   */
   constexpr double max_cycles() const noexcept {
     return std::max({vmem, tcp, l2, mall, hbm_read, hbm_write, xgmi_read, xgmi_write, valu});
   }
 
-  // The FU name with the largest cycle count.
+  /**
+   * @brief Name of the binding functional unit for the iteration.
+   *
+   * Reports which unit has the largest cycle count so a caller can see *why* a
+   * transfer is slow.
+   *
+   * @return std::string_view The FU name with the largest cycle count.
+   */
   constexpr std::string_view bottleneck() const noexcept {
     double best_v           = vmem;
     std::string_view best_k = "vmem";
@@ -109,18 +126,30 @@ struct iter_times_t {
 };
 
 // ─── compute_iter_times ─────────────────────────────────────────
-// Per-FU time (in cycles) for one inner-loop iteration. The pattern is the
-// same for every unit — time = work / throughput — but the *throughput* term
-// is where the physics lives:
-//   • bandwidth units (TCP/L2/MALL/HBM) divide cache-line bytes by a per-CU
-//     bytes/cycle rate, with HBM and L2 rates first adjusted for how many CUs
-//     are concurrently active (the contention models from hardware.hpp);
-//   • VMEM divides issued instructions by the issue rate (an issue ceiling,
-//     independent of bandwidth);
-//   • xGMI read is latency-limited (MSHR cap), xGMI write is concentration-
-//     limited — see the two blocks below;
-//   • VALU divides lane-ops by the VALU rate.
-// Output is in cycles because every hardware field is already cycle-native.
+/**
+ * @brief Per-functional-unit time (in cycles) for one inner-loop iteration.
+ *
+ * The pattern is the same for every unit — time = work / throughput — but the
+ * *throughput* term is where the physics lives:
+ *   • bandwidth units (TCP/L2/MALL/HBM) divide cache-line bytes by a per-CU
+ *     bytes/cycle rate, with HBM and L2 rates first adjusted for how many CUs
+ *     are concurrently active (the contention models from hardware.hpp);
+ *   • VMEM divides issued instructions by the issue rate (an issue ceiling,
+ *     independent of bandwidth);
+ *   • xGMI read is latency-limited (MSHR cap), xGMI write is concentration-
+ *     limited — see the two blocks below;
+ *   • VALU divides lane-ops by the VALU rate.
+ * Output is in cycles because every hardware field is already cycle-native.
+ *
+ * @param work Per-functional-unit work counts (cache lines, instructions, ops).
+ * @param system GPU + fabric hardware description (@see origami::comm::system_t).
+ * @param bw_per_wg Per-workgroup share of link bandwidth (bytes/cycle).
+ * @param active_cus Number of concurrently active CUs (drives contention scaling).
+ * @param heur Tunable heuristic parameters (defaults to DEFAULT_HEURISTICS).
+ * @param primitive Optional collective context for the xGMI-write ramp; nullopt
+ *        falls back to the default concentration k.
+ * @return iter_times_t Per-functional-unit cycle counts for the iteration.
+ */
 inline iter_times_t compute_iter_times(const functional_unit_work_t& work,
                                        const system_t& system,
                                        double bw_per_wg,
@@ -211,16 +240,27 @@ inline iter_times_t compute_iter_times(const functional_unit_work_t& work,
 }
 
 // ─── iter_counts_from_tile ─────────────────────────────────────
-// How many pipelined iterations a WG tile takes, and how many elements each
-// iteration reduces (the latter only matters for the VALU term). The walk has
-// to respect the tile's memory layout:
-//   contiguous : the tile is one flat byte run, so it is simply chopped into
-//                cl_per_iter-line iterations — ceil(cachelines / cl_per_iter).
-//   strided    : each of the m rows must be walked separately (a row's partial
-//                final line cannot be merged with the next row), so the count
-//                is m × iters_per_row. This is the iteration-level consequence
-//                of the same contiguity penalty tile_shape_t.cachelines models.
-// Returns {num_iters, elements_per_iter}. Both ≥ 1.
+/**
+ * @brief Pipelined iteration count for a WG tile and elements per iteration.
+ *
+ * How many pipelined iterations a WG tile takes, and how many elements each
+ * iteration reduces (the latter only matters for the VALU term). The walk has
+ * to respect the tile's memory layout:
+ *   contiguous : the tile is one flat byte run, so it is simply chopped into
+ *                cl_per_iter-line iterations — ceil(cachelines / cl_per_iter).
+ *   strided    : each of the m rows must be walked separately (a row's partial
+ *                final line cannot be merged with the next row), so the count
+ *                is m × iters_per_row. This is the iteration-level consequence
+ *                of the same contiguity penalty tile_shape_t.cachelines models.
+ *
+ * @param wg_tile Optional tile shape; when present and strided it drives the
+ *        per-row walk, otherwise the flat contiguous run is used.
+ * @param wg_tile_cachelines Total cache lines in the WG tile.
+ * @param wg_tile_elements Total elements in the WG tile.
+ * @param cl_per_iter Cache lines transferred per pipelined iteration.
+ * @return std::pair<std::size_t, std::size_t> {num_iters, elements_per_iter};
+ *         both are >= 1.
+ */
 inline std::pair<std::size_t, std::size_t> iter_counts_from_tile(
     const std::optional<tile_shape_t>& wg_tile,
     std::size_t wg_tile_cachelines,
@@ -241,9 +281,27 @@ inline std::pair<std::size_t, std::size_t> iter_counts_from_tile(
 }
 
 // ─── compute_wg_tile_latency ────────────────────────────────────
-// Full wg_tile transfer latency for one timestep, in cycles. Composes
-// resolve_work_graph + compute_iter_times into the software-pipelined
-// loop model.
+/**
+ * @brief Full wg_tile transfer latency for one timestep, in cycles.
+ *
+ * Composes resolve_work_graph + compute_iter_times into the software-pipelined
+ * loop model: T_total = T_prologue + (num_iters − 1) × T_wlt + T_epilogue +
+ * T_sync.
+ *
+ * @param work_graph Ordered communication ops for this rank's timestep.
+ * @param wg_tile_cachelines Total cache lines in the WG tile.
+ * @param config Communication kernel configuration (load width, WG count, etc.).
+ * @param system GPU + fabric hardware description (@see origami::comm::system_t).
+ * @param bw_per_wg Per-workgroup share of link bandwidth (bytes/cycle).
+ * @param wg_tile_elements Total elements in the WG tile.
+ * @param active_cus Number of concurrently active CUs (drives contention scaling).
+ * @param wg_tile Optional tile shape for the strided-walk iteration count;
+ *        defaults to nullopt (flat contiguous run).
+ * @param heur Tunable heuristic parameters (defaults to DEFAULT_HEURISTICS).
+ * @param primitive Optional collective context for the xGMI-write ramp.
+ * @return wg_tile_latency_breakdown_t Per-stage and per-FU cycle breakdown,
+ *         including total cycles and the clock used for any cycle→time step.
+ */
 inline wg_tile_latency_breakdown_t compute_wg_tile_latency(
     const std::vector<op_t>& work_graph,
     std::size_t wg_tile_cachelines,

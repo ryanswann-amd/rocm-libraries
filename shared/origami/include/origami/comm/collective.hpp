@@ -67,6 +67,17 @@
 namespace origami::comm {
 
 // ─── ring-step heuristic ────────────────────────────────────────
+/**
+ * @brief Per-launch ring-step proxy/handshake overhead, in cycles.
+ *
+ * Empirical, CPU-mediated overhead that the bandwidth model cannot see, charged
+ * once per ring timestep. Returns 0 for non-ring algorithms.
+ *
+ * @param primitive Collective being run (keys the per-step heuristic).
+ * @param algorithm Resolved collective algorithm (provides timestep count and class).
+ * @param heur Tunable heuristic parameters.
+ * @return double Total ring-step overhead in GPU cycles (0 if not ring-class).
+ */
 inline double ring_step_overhead_cycles(primitive_t primitive,
                                         const collective_algorithm_t& algorithm,
                                         const heuristics_t& heur) {
@@ -80,6 +91,23 @@ inline double ring_step_overhead_cycles(primitive_t primitive,
 // calls it below. No default factory is needed here.
 
 // ─── _compute_ring_latency ──────────────────────────────────────
+/**
+ * @brief Throughput-composed latency of a pipelined ring collective, in cycles.
+ *
+ * All steps stream over the same ring link and overlap across WGs, so the ring
+ * behaves as one long pipe: total wire bytes ÷ aggregate sustainable throughput
+ * (the slower of fabric and local HBM), plus serial per-step sync and empirical
+ * per-step overhead, on top of the fixed kernel launch floor.
+ *
+ * @param algorithm Resolved ring algorithm (timesteps, chunks, link schedule).
+ * @param problem Collective problem (shape, dtype, world size, collective op).
+ * @param config Communication kernel configuration (WG count, load width, etc.).
+ * @param system GPU + fabric hardware description (@see origami::comm::system_t).
+ * @param my_rank Rank whose link schedule is sampled for the sync-op count.
+ * @param heur Tunable heuristic parameters.
+ * @return double Predicted latency for this rank in GPU cycles (not microseconds;
+ *         the cycles→µs conversion happens at the public boundary, predict_row).
+ */
 inline double compute_ring_latency(const collective_algorithm_t& algorithm,
                                    const comm_problem_t& problem,
                                    const comm_config_t& config,
@@ -151,6 +179,23 @@ inline double compute_ring_latency(const collective_algorithm_t& algorithm,
 }
 
 // ─── _compute_sequential_latency ────────────────────────────────
+/**
+ * @brief Latency-composed latency of a sequential-timestep collective, in cycles.
+ *
+ * Timesteps are data-dependent, so their latencies add up; within a timestep the
+ * links run in parallel, so a timestep costs the *slowest* link (max over links),
+ * with "self" steps bound by local HBM instead of a fabric link. Adds per-step
+ * overhead on top of the fixed kernel launch floor.
+ *
+ * @param algorithm Resolved sequential algorithm (timesteps, link schedule).
+ * @param problem Collective problem (shape, dtype, world size, collective op).
+ * @param config Communication kernel configuration (WG count, load width, etc.).
+ * @param system GPU + fabric hardware description (@see origami::comm::system_t).
+ * @param my_rank Rank whose per-timestep link schedule is evaluated.
+ * @param heur Tunable heuristic parameters.
+ * @return double Predicted latency for this rank in GPU cycles (not microseconds;
+ *         the cycles→µs conversion happens at the public boundary, predict_row).
+ */
 inline double compute_sequential_latency(const collective_algorithm_t& algorithm,
                                          const comm_problem_t& problem,
                                          const comm_config_t& config,
@@ -230,16 +275,28 @@ inline double compute_sequential_latency(const collective_algorithm_t& algorithm
 }
 
 // ─── compute_collective_latency_for_rank ────────────────────────
-// Predicted GPU cycles for *one* rank's timeline. This is the per-rank atom
-// and the diagnostic entry point: call it directly to inspect whether ranks
-// diverge. Caller converts cycles→µs at the public boundary.
-//
-// The operation comes from problem.collective (what to compute) and the
-// implementation from config.algorithm (how) — resolve_algorithm maps that
-// pair to a concrete algorithm (or rejects an invalid pair). A non-null
-// config.algorithm_override bypasses resolution with a caller-supplied object.
-// This is the problem/config split: correctness inputs in the problem,
-// performance inputs in the config.
+/**
+ * @brief Predicted GPU cycles for *one* rank's timeline.
+ *
+ * This is the per-rank atom and the diagnostic entry point: call it directly to
+ * inspect whether ranks diverge. Caller converts cycles→µs at the public
+ * boundary.
+ *
+ * The operation comes from problem.collective (what to compute) and the
+ * implementation from config.algorithm (how) — resolve_algorithm maps that pair
+ * to a concrete algorithm (or rejects an invalid pair). A non-null
+ * config.algorithm_override bypasses resolution with a caller-supplied object.
+ * This is the problem/config split: correctness inputs in the problem,
+ * performance inputs in the config.
+ *
+ * @param problem Collective problem (shape, dtype, world size, collective op).
+ * @param config Communication kernel configuration; algorithm_override, if set,
+ *        bypasses resolve_algorithm.
+ * @param system GPU + fabric hardware description (@see origami::comm::system_t).
+ * @param my_rank Rank whose timeline is predicted.
+ * @param heur Tunable heuristic parameters (defaults to DEFAULT_HEURISTICS).
+ * @return double Predicted latency for this rank in GPU cycles.
+ */
 inline double compute_collective_latency_for_rank(const comm_problem_t& problem,
                                                   const comm_config_t& config,
                                                   const system_t& system,
@@ -259,15 +316,24 @@ inline double compute_collective_latency_for_rank(const comm_problem_t& problem,
 }
 
 // ─── compute_collective_latency ─────────────────────────────────
-// Predicted GPU cycles for the whole collective. The operation completes only
-// when its slowest participant does, so the cost is the *max* of every rank's
-// timeline — this loop is where rank asymmetry, if any algorithm ever
-// introduces it, would surface.
-//
-// Shortcut: with heur.assume_rank_symmetry the loop collapses to rank 0 alone
-// (see heuristics_t — exact for the rank-symmetric algorithms we ship today, an
-// N× speedup). Default is the honest max so the engine stays correct for any
-// future asymmetric algorithm without a flag change.
+/**
+ * @brief Predicted GPU cycles for the whole collective.
+ *
+ * The operation completes only when its slowest participant does, so the cost is
+ * the *max* of every rank's timeline — this loop is where rank asymmetry, if any
+ * algorithm ever introduces it, would surface.
+ *
+ * Shortcut: with heur.assume_rank_symmetry the loop collapses to rank 0 alone
+ * (see heuristics_t — exact for the rank-symmetric algorithms we ship today, an
+ * N× speedup). Default is the honest max so the engine stays correct for any
+ * future asymmetric algorithm without a flag change.
+ *
+ * @param problem Collective problem (shape, dtype, world size, collective op).
+ * @param config Communication kernel configuration.
+ * @param system GPU + fabric hardware description (@see origami::comm::system_t).
+ * @param heur Tunable heuristic parameters (defaults to DEFAULT_HEURISTICS).
+ * @return double Predicted latency for the whole collective in GPU cycles.
+ */
 inline double compute_collective_latency(const comm_problem_t& problem,
                                          const comm_config_t& config,
                                          const system_t& system,
@@ -285,16 +351,32 @@ inline double compute_collective_latency(const comm_problem_t& problem,
 }
 
 // ─── predict_row ────────────────────────────────────────────────
-// The byte-level public entry point: predict one collective call's latency in
-// microseconds. Its job is to translate a benchmark row's conventions into a
-// comm_problem_t/comm_config_t and then defer to the model above.
-//
-// The one subtlety it owns is the message-size convention: most collectives
-// report msg_bytes as the per-rank buffer, but reduce_scatter reports the full
-// pre-scatter buffer, so its per-rank share is msg_bytes / world_size. When no
-// explicit [M,N] shape is given, the buffer is treated as a 1×N row of bf16
-// elements. cl/sync contention, algorithm, and unit conversion are all delegated;
-// the cycles→µs conversion happens here, at the boundary.
+/**
+ * @brief Byte-level public entry point: predict one collective call's latency
+ *        in microseconds.
+ *
+ * Its job is to translate a benchmark row's conventions into a
+ * comm_problem_t/comm_config_t and then defer to the model above.
+ *
+ * The one subtlety it owns is the message-size convention: most collectives
+ * report msg_bytes as the per-rank buffer, but reduce_scatter reports the full
+ * pre-scatter buffer, so its per-rank share is msg_bytes / world_size. When no
+ * explicit [M,N] shape is given, the buffer is treated as a 1×N row of bf16
+ * elements. cl/sync contention, algorithm, and unit conversion are all
+ * delegated; the cycles→µs conversion happens here, at the boundary.
+ *
+ * @param primitive Collective name (e.g. "all_reduce"); mapped to an enum here.
+ * @param msg_bytes Message size in the benchmark's convention (per-rank buffer,
+ *        except reduce_scatter which passes the aggregate pre-scatter buffer).
+ * @param world_size Number of participating ranks.
+ * @param nchannels Number of channels/workgroups driving the collective.
+ * @param system GPU + fabric hardware description (@see origami::comm::system_t).
+ * @param M Optional row count of the logical tensor; 0 means derive from msg_bytes.
+ * @param N Optional column count of the logical tensor; 0 means derive from msg_bytes.
+ * @param split_dim Sharded axis (0 = rows, 1 = columns).
+ * @param heur Tunable heuristic parameters (defaults to DEFAULT_HEURISTICS).
+ * @return double Predicted latency in microseconds.
+ */
 inline double predict_row(std::string_view primitive,
                           std::size_t msg_bytes,
                           int world_size,
