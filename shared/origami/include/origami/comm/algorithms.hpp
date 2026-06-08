@@ -70,7 +70,6 @@ namespace origami::comm {
 /// Sentinel link id: the timestep is local (a rank maps to itself, no fabric link is used).
 inline constexpr int SELF_LINK = -1;
 
-// ─── schedule_entry_t ───────────────────────────────────────────────
 /**
  * @brief One workgroup's communication assignment for a single timestep.
  *
@@ -207,7 +206,6 @@ class collective_algorithm_t {
   virtual bool is_ring_pipeline() const { return false; }
 };
 
-// ─── all_to_same_algorithm_t ────────────────────────────────────────────
 /**
  * @brief Sequential collective where all workgroups target the same link each timestep.
  *
@@ -264,7 +262,6 @@ class all_to_same_algorithm_t : public collective_algorithm_t {
   work_graph_fn_t wg_fn_;  ///< Per-hop work-graph builder.
 };
 
-// ─── pid_staggered_algorithm_t ─────────────────────────────────────────
 /**
  * @brief Direct collective with each workgroup's starting peer staggered by pid.
  *
@@ -334,7 +331,6 @@ class pid_staggered_algorithm_t : public collective_algorithm_t {
   work_graph_fn_t wg_fn_;  ///< Per-hop work-graph builder.
 };
 
-// ─── pid_partitioned_algorithm_t ───────────────────────────────────────
 /**
  * @brief Single-step collective with each workgroup permanently bound to one link.
  *
@@ -437,7 +433,6 @@ inline int ring_wgs_per_link(int num_wgs, int num_gpus) noexcept {
   return std::max(num_wgs / nrings, 1);
 }
 
-// ─── ring_fixed_algorithm_t ────────────────────────────────────────────
 /**
  * @brief Pipelined ring whose every hop crosses the fixed next_rank neighbour link.
  *
@@ -509,7 +504,6 @@ class ring_fixed_algorithm_t : public collective_algorithm_t {
   work_graph_fn_t wg_fn_;  ///< Per-hop work-graph builder.
 };
 
-// ─── ring_all_gather_algorithm_t ────────────────────────────────────────
 /**
  * @brief All-gather ring: N-1 hops forwarding each rank's slice around the ring.
  *
@@ -557,7 +551,6 @@ class ring_all_gather_algorithm_t : public collective_algorithm_t {
   int num_gpus_;  ///< Communicator size.
 };
 
-// ─── ring_reduce_scatter_algorithm_t ────────────────────────────────────
 /**
  * @brief Reduce-scatter ring: the all-gather ring with a reduce on each hop.
  *
@@ -606,7 +599,6 @@ class ring_reduce_scatter_algorithm_t : public collective_algorithm_t {
   int num_gpus_;  ///< Communicator size.
 };
 
-// ─── two_shot_all_reduce_algorithm_t ─────────────────────────────────────
 /**
  * @brief All-reduce factored into a reduce-scatter shot then an all-gather shot.
  *
@@ -679,7 +671,6 @@ class two_shot_all_reduce_algorithm_t : public collective_algorithm_t {
   int num_gpus_;  ///< Communicator size.
 };
 
-// ─── ring_all_reduce_algorithm_t ────────────────────────────────────────
 /**
  * @brief Bandwidth-optimal all-reduce: a reduce-scatter ring then an all-gather ring.
  *
@@ -750,7 +741,6 @@ class ring_all_reduce_algorithm_t : public collective_algorithm_t {
   int num_gpus_;  ///< Communicator size.
 };
 
-// ─── ring_broadcast_algorithm_t ────────────────────────────────────────
 /**
  * @brief Broadcast as an N-1 hop pipeline forwarding the root's data around the ring.
  *
@@ -877,7 +867,6 @@ inline std::unique_ptr<collective_algorithm_t> alltoall_algorithm(int num_gpus) 
   return std::make_unique<pid_staggered_algorithm_t>(num_gpus, wg);
 }
 
-// ─── resolve_algorithm ───────────────────────────────────────────
 /**
  * @brief Map a (collective, algorithm) pair to a concrete algorithm implementation.
  *

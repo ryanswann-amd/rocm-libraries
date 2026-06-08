@@ -77,7 +77,6 @@ class collective_algorithm_t;
  */
 inline constexpr std::size_t CACHELINE_BYTES = 64;
 
-// ─── data_type_t ────────────────────────────────────────────────────
 /**
  * @brief Alias for the canonical Origami data-type enum.
  *
@@ -111,7 +110,6 @@ constexpr int dtype_bytes(data_type_t dt) noexcept {
   }
 }
 
-// ─── load_width_t ───────────────────────────────────────────────────
 /**
  * @brief Bytes moved by a single VMEM instruction.
  *
@@ -283,7 +281,6 @@ constexpr auto ceil_div(A a, B b) noexcept -> std::common_type_t<A, B> {
   return static_cast<U>((static_cast<U>(a) + static_cast<U>(b) - 1) / static_cast<U>(b));
 }
 
-// ─── tile_shape_t ───────────────────────────────────────────────────
 /**
  * @brief A 2D row-major tile (m × n × dtype) with a contiguity bit.
  *
@@ -430,7 +427,6 @@ struct tile_shape_t {
   }
 };
 
-// ─── comm_problem_t ─────────────────────────────────────────────────
 /**
  * @brief 2D tensor [M, N] distributed across num_gpus, split along split_dim.
  *
@@ -496,7 +492,6 @@ struct comm_problem_t {
   }
 };
 
-// ─── comm_config_t ──────────────────────────────────────────────────
 /**
  * @brief Workgroup-level execution config.
  *
@@ -566,7 +561,6 @@ struct comm_config_t {
   }
 };
 
-// ─── functional_unit_work_t ──────────────────────────────────────────
 /**
  * @brief The work a single iteration imposes on each hardware functional unit.
  *
@@ -636,7 +630,6 @@ struct functional_unit_work_t {
   }
 };
 
-// ─── wg_tile_latency_breakdown_t ──────────────────────────────────────
 /**
  * @brief Full wg_tile transfer latency in GPU cycles, plus per-FU breakdowns.
  *

@@ -54,7 +54,6 @@
 
 namespace origami::comm {
 
-// ─── iter_dims_t ──────────────────────────────────────────────────
 /**
  * @brief The sizing of one software-pipelined iteration.
  *
@@ -268,7 +267,6 @@ struct wait_t {
 /// Sum type for any primitive in a work graph.
 using op_t = std::variant<load_t, store_t, pull_t, push_t, reduce_t, signal_t, wait_t>;
 
-// ─── resolve_work_graph ─────────────────────────────────────────
 /**
  * @brief The two work buckets a resolved collective step splits into.
  *

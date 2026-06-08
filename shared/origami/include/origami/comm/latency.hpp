@@ -125,7 +125,6 @@ struct iter_times_t {
   }
 };
 
-// ─── compute_iter_times ─────────────────────────────────────────
 /**
  * @brief Per-functional-unit time (in cycles) for one inner-loop iteration.
  *
@@ -239,7 +238,6 @@ inline iter_times_t compute_iter_times(const functional_unit_work_t& work,
   return t;
 }
 
-// ─── iter_counts_from_tile ─────────────────────────────────────
 /**
  * @brief Pipelined iteration count for a WG tile and elements per iteration.
  *
@@ -280,7 +278,6 @@ inline std::pair<std::size_t, std::size_t> iter_counts_from_tile(
   return {num_iters, elements_per_iter};
 }
 
-// ─── compute_wg_tile_latency ────────────────────────────────────
 /**
  * @brief Full wg_tile transfer latency for one timestep, in cycles.
  *

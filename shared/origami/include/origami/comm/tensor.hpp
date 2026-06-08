@@ -205,7 +205,6 @@ inline full_mn_t per_rank_shape_to_full_mn(const std::vector<std::size_t>& shape
   return {m_per_rank * static_cast<std::size_t>(world_size), n_per_rank, 0};
 }
 
-// ─── tensor_collective_prediction_t ─────────────────────────────────
 /**
  * @brief Result of a shape-aware tensor collective prediction.
  *
@@ -268,7 +267,6 @@ inline bool is_supported_op(std::string_view op) {
   return false;
 }
 
-// ─── predict_tensor_collective ──────────────────────────────────
 /**
  * @brief Shape-aware tensor collective prediction (typed-dtype overload).
  *

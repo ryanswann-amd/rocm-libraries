@@ -91,7 +91,6 @@ constexpr std::string_view framework_name(framework_t f) noexcept {
   return FRAMEWORK_NAMES[static_cast<std::size_t>(f)];
 }
 
-// ─── heuristics_t ──────────────────────────────────────────────────
 /**
  * @brief Empirical fudge factors layered on top of the roofline model.
  *

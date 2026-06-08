@@ -90,7 +90,6 @@ inline double ring_step_overhead_cycles(primitive_t primitive,
 // algorithms.hpp as resolve_algorithm(); compute_collective_latency_for_rank
 // calls it below. No default factory is needed here.
 
-// ─── _compute_ring_latency ──────────────────────────────────────
 /**
  * @brief Throughput-composed latency of a pipelined ring collective, in cycles.
  *
@@ -178,7 +177,6 @@ inline double compute_ring_latency(const collective_algorithm_t& algorithm,
   return comm_hw.launch_overhead_cycles + T_transfer_total + T_sync_total + T_step_overhead;
 }
 
-// ─── _compute_sequential_latency ────────────────────────────────
 /**
  * @brief Latency-composed latency of a sequential-timestep collective, in cycles.
  *
@@ -274,7 +272,6 @@ inline double compute_sequential_latency(const collective_algorithm_t& algorithm
   return comm_hw.launch_overhead_cycles + T_timesteps + T_step_overhead;
 }
 
-// ─── compute_collective_latency_for_rank ────────────────────────
 /**
  * @brief Predicted GPU cycles for *one* rank's timeline.
  *
@@ -315,7 +312,6 @@ inline double compute_collective_latency_for_rank(const comm_problem_t& problem,
   return compute_sequential_latency(*A, problem, config, system, my_rank, heur);
 }
 
-// ─── compute_collective_latency ─────────────────────────────────
 /**
  * @brief Predicted GPU cycles for the whole collective.
  *
@@ -350,7 +346,6 @@ inline double compute_collective_latency(const comm_problem_t& problem,
   return T_max;
 }
 
-// ─── predict_row ────────────────────────────────────────────────
 /**
  * @brief Byte-level public entry point: predict one collective call's latency
  *        in microseconds.
