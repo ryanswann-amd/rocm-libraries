@@ -36,7 +36,9 @@
 
 namespace origami::comm {
 
-// ─── Ring distribution helpers ───────────────────────────────────
+// Spread num_wgs over the ring links, conserving the total: each of the
+// nrings=min(num_wgs, N-1) links gets floor(num_wgs/nrings), and the first
+// `extra` links take one more so the counts sum back to num_wgs.
 std::unordered_map<int, int> ring_distribute(int num_wgs, int num_gpus) {
   const int nrings = std::max(std::min(num_wgs, num_gpus - 1), 1);
   const int base   = num_wgs / nrings;
@@ -46,15 +48,18 @@ std::unordered_map<int, int> ring_distribute(int num_wgs, int num_gpus) {
   return out;
 }
 
+// Floored workgroups-per-ring-link share (clamped to >= 1) used to price per-link contention.
 int ring_wgs_per_link(int num_wgs, int num_gpus) noexcept {
   const int nrings = std::max(std::min(num_wgs, num_gpus - 1), 1);
   return std::max(num_wgs / nrings, 1);
 }
 
-// ─── all_to_same_algorithm_t ─────────────────────────────────────
+// Store the communicator size and the per-hop work-graph closure (default: pull+store).
 all_to_same_algorithm_t::all_to_same_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
+// Target the next remote peer (my_rank + timestep + 1) and pull from it; load locally on a
+// self-step.
 schedule_entry_t all_to_same_algorithm_t::link_of(int /*pid*/, int timestep, int my_rank) const {
   const int peer     = floor_mod(my_rank + timestep + 1, num_gpus_);
   const bool is_self = (peer == my_rank);
@@ -62,15 +67,19 @@ schedule_entry_t all_to_same_algorithm_t::link_of(int /*pid*/, int timestep, int
   return {is_self ? SELF_LINK : peer, peer, direction_t::PULL, std::move(work), is_self};
 }
 
+// One shared link per step, so every workgroup rides it.
 int all_to_same_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const { return num_wgs; }
 
+// Exactly one link is active this step, carrying all the workgroups.
 std::unordered_map<int, int> all_to_same_algorithm_t::active_links(int timestep,
                                                                    int num_wgs) const {
   return {{timestep % (num_gpus_ - 1), num_wgs}};
 }
 
+// One round per remote peer.
 int all_to_same_algorithm_t::num_timesteps() const { return num_gpus_ - 1; }
 
+// Default hop: pull then store; load+store when the data is already local.
 std::vector<op_t> all_to_same_algorithm_t::default_work_graph(int peer,
                                                               int /*my_rank*/,
                                                               int /*num_gpus*/,
@@ -79,10 +88,11 @@ std::vector<op_t> all_to_same_algorithm_t::default_work_graph(int peer,
   return {pull_t{peer}, store_t{}};
 }
 
-// ─── pid_staggered_algorithm_t ───────────────────────────────────
+// Store the communicator size and the per-hop work-graph closure (default: pull+reduce).
 pid_staggered_algorithm_t::pid_staggered_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
+// Offset the starting peer by pid, walk peers in order, and pull each.
 schedule_entry_t pid_staggered_algorithm_t::link_of(int pid, int timestep, int my_rank) const {
   const int start    = floor_mod(pid, num_gpus_);
   const int peer_idx = floor_mod(start + timestep, num_gpus_);
@@ -92,12 +102,14 @@ schedule_entry_t pid_staggered_algorithm_t::link_of(int pid, int timestep, int m
   return {is_self ? SELF_LINK : peer, peer, direction_t::PULL, std::move(work), is_self};
 }
 
+// Spread the remote workgroups evenly over the N-1 links.
 int pid_staggered_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
   const int num_links  = num_gpus_ - 1;
   const int remote_wgs = num_wgs * (num_gpus_ - 1) / num_gpus_;
   return std::max(remote_wgs / std::max(num_links, 1), 1);
 }
 
+// All N-1 links active each step, remote workgroups split evenly across them.
 std::unordered_map<int, int> pid_staggered_algorithm_t::active_links(int /*timestep*/,
                                                                      int num_wgs) const {
   const int num_links  = num_gpus_ - 1;
@@ -108,9 +120,12 @@ std::unordered_map<int, int> pid_staggered_algorithm_t::active_links(int /*times
   return out;
 }
 
+// N rounds, counting the self-step.
 int pid_staggered_algorithm_t::num_timesteps() const { return num_gpus_; }
+// Each step moves 1/N of the buffer.
 int pid_staggered_algorithm_t::chunks_per_timestep() const { return num_gpus_; }
 
+// Default hop: pull then reduce; load+reduce when local.
 std::vector<op_t> pid_staggered_algorithm_t::default_work_graph(int peer,
                                                                 int /*my_rank*/,
                                                                 int /*num_gpus*/,
@@ -119,10 +134,11 @@ std::vector<op_t> pid_staggered_algorithm_t::default_work_graph(int peer,
   return {pull_t{peer}, reduce_t{}};
 }
 
-// ─── pid_partitioned_algorithm_t ─────────────────────────────────
+// Store the communicator size and the per-hop work-graph closure (default: load+push).
 pid_partitioned_algorithm_t::pid_partitioned_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
+// Permanently bind the workgroup to the destination chosen by its pid and push there.
 schedule_entry_t pid_partitioned_algorithm_t::link_of(int pid,
                                                       int /*timestep*/,
                                                       int my_rank) const {
@@ -133,10 +149,12 @@ schedule_entry_t pid_partitioned_algorithm_t::link_of(int pid,
   return {is_self ? SELF_LINK : peer, peer, direction_t::PUSH, std::move(work), is_self};
 }
 
+// Partition the workgroups evenly, one share per destination.
 int pid_partitioned_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
   return std::max(num_wgs / num_gpus_, 1);
 }
 
+// All N-1 remote links active, workgroups partitioned evenly across them.
 std::unordered_map<int, int> pid_partitioned_algorithm_t::active_links(int /*timestep*/,
                                                                        int num_wgs) const {
   const int per_link = std::max(num_wgs / num_gpus_, 1);
@@ -145,8 +163,10 @@ std::unordered_map<int, int> pid_partitioned_algorithm_t::active_links(int /*tim
   return out;
 }
 
+// A single timestep: every destination is served at once.
 int pid_partitioned_algorithm_t::num_timesteps() const { return 1; }
 
+// Default hop: load then push; load+store when local.
 std::vector<op_t> pid_partitioned_algorithm_t::default_work_graph(int peer,
                                                                   int /*my_rank*/,
                                                                   int /*num_gpus*/,
@@ -155,30 +175,39 @@ std::vector<op_t> pid_partitioned_algorithm_t::default_work_graph(int peer,
   return {load_t{}, push_t{peer}};
 }
 
-// ─── ring_fixed_algorithm_t ──────────────────────────────────────
+// Store the communicator size and the per-hop work-graph closure (default: reduce-ring with
+// signal/wait).
 ring_fixed_algorithm_t::ring_fixed_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
+// Every hop pushes to the fixed next-rank neighbour.
 schedule_entry_t ring_fixed_algorithm_t::link_of(int /*pid*/, int /*timestep*/, int my_rank) const {
   const int next_rank = floor_mod(my_rank + 1, num_gpus_);
   auto work           = wg_fn_(next_rank, my_rank, num_gpus_, false);
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
+// Floored ring share (see ring_wgs_per_link).
 int ring_fixed_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
   return ring_wgs_per_link(num_wgs, num_gpus_);
 }
 
+// Workgroups distributed across the ring links (see ring_distribute).
 std::unordered_map<int, int> ring_fixed_algorithm_t::active_links(int /*timestep*/,
                                                                   int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
+// N-1 ring hops.
 int ring_fixed_algorithm_t::num_timesteps() const { return num_gpus_ - 1; }
+// Each hop moves 1/N of the buffer.
 int ring_fixed_algorithm_t::chunks_per_timestep() const { return num_gpus_; }
+// Ring-class: eligible for the per-step overhead heuristic.
 bool ring_fixed_algorithm_t::is_ring_class() const { return true; }
+// Pipelined ring: priced by the closed-form throughput model.
 bool ring_fixed_algorithm_t::is_ring_pipeline() const { return true; }
 
+// Reduce-ring hop: wait on prev, pull from prev, reduce, store, signal next.
 std::vector<op_t> ring_fixed_algorithm_t::default_work_graph(int /*peer*/,
                                                              int my_rank,
                                                              int num_gpus,
@@ -195,9 +224,10 @@ std::vector<op_t> ring_fixed_algorithm_t::default_work_graph(int /*peer*/,
   };
 }
 
-// ─── ring_all_gather_algorithm_t ─────────────────────────────────
+// Store the communicator size.
 ring_all_gather_algorithm_t::ring_all_gather_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
+// Each step loads locally, stores, and pushes the slice to the next rank.
 schedule_entry_t ring_all_gather_algorithm_t::link_of(int /*pid*/,
                                                       int /*timestep*/,
                                                       int my_rank) const {
@@ -210,23 +240,29 @@ schedule_entry_t ring_all_gather_algorithm_t::link_of(int /*pid*/,
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
+// Floored ring share (see ring_wgs_per_link).
 int ring_all_gather_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
   return ring_wgs_per_link(num_wgs, num_gpus_);
 }
 
+// Workgroups distributed across the ring links (see ring_distribute).
 std::unordered_map<int, int> ring_all_gather_algorithm_t::active_links(int /*timestep*/,
                                                                        int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
+// N-1 ring hops.
 int ring_all_gather_algorithm_t::num_timesteps() const { return num_gpus_ - 1; }
+// One chunk per step (the per-rank send).
 int ring_all_gather_algorithm_t::chunks_per_timestep() const { return 1; }
+// Ring-class: eligible for the per-step overhead heuristic.
 bool ring_all_gather_algorithm_t::is_ring_class() const { return true; }
 
-// ─── ring_reduce_scatter_algorithm_t ─────────────────────────────
+// Store the communicator size.
 ring_reduce_scatter_algorithm_t::ring_reduce_scatter_algorithm_t(int num_gpus)
     : num_gpus_{num_gpus} {}
 
+// Each step loads, reduces, stores, and pushes the slice to the next rank.
 schedule_entry_t ring_reduce_scatter_algorithm_t::link_of(int /*pid*/,
                                                           int /*timestep*/,
                                                           int my_rank) const {
@@ -240,23 +276,30 @@ schedule_entry_t ring_reduce_scatter_algorithm_t::link_of(int /*pid*/,
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
+// Floored ring share (see ring_wgs_per_link).
 int ring_reduce_scatter_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
   return ring_wgs_per_link(num_wgs, num_gpus_);
 }
 
+// Workgroups distributed across the ring links (see ring_distribute).
 std::unordered_map<int, int> ring_reduce_scatter_algorithm_t::active_links(int /*timestep*/,
                                                                            int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
+// N-1 ring hops.
 int ring_reduce_scatter_algorithm_t::num_timesteps() const { return num_gpus_ - 1; }
+// One chunk per step (the per-rank slice).
 int ring_reduce_scatter_algorithm_t::chunks_per_timestep() const { return 1; }
+// Ring-class: eligible for the per-step overhead heuristic.
 bool ring_reduce_scatter_algorithm_t::is_ring_class() const { return true; }
 
-// ─── two_shot_all_reduce_algorithm_t ─────────────────────────────
+// Store the communicator size.
 two_shot_all_reduce_algorithm_t::two_shot_all_reduce_algorithm_t(int num_gpus)
     : num_gpus_{num_gpus} {}
 
+// Reduce phase (step < N) pulls and sums each peer's slice; broadcast phase pushes
+// the finished slice out, skipping self in the peer ordering.
 schedule_entry_t two_shot_all_reduce_algorithm_t::link_of(int pid,
                                                           int timestep,
                                                           int my_rank) const {
@@ -281,6 +324,7 @@ schedule_entry_t two_shot_all_reduce_algorithm_t::link_of(int pid,
   return {peer, peer, direction_t::PUSH, std::move(work), false};
 }
 
+// Remote workgroups spread over the N-1 links (fewer during the reduce phase's self-step).
 int two_shot_all_reduce_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
   const int num_links = num_gpus_ - 1;
   const int remote_wgs =
@@ -288,6 +332,7 @@ int two_shot_all_reduce_algorithm_t::wgs_on_link(int timestep, int num_wgs) cons
   return std::max(remote_wgs / std::max(num_links, 1), 1);
 }
 
+// All N-1 links active each step, workgroups spread evenly across them.
 std::unordered_map<int, int> two_shot_all_reduce_algorithm_t::active_links(int timestep,
                                                                            int num_wgs) const {
   const int num_links = num_gpus_ - 1;
@@ -299,12 +344,16 @@ std::unordered_map<int, int> two_shot_all_reduce_algorithm_t::active_links(int t
   return out;
 }
 
+// 2N-1 rounds: N reduce steps (incl. self) then N-1 broadcast steps.
 int two_shot_all_reduce_algorithm_t::num_timesteps() const { return 2 * num_gpus_ - 1; }
+// Each step moves 1/N of the buffer.
 int two_shot_all_reduce_algorithm_t::chunks_per_timestep() const { return num_gpus_; }
 
-// ─── ring_all_reduce_algorithm_t ─────────────────────────────────
+// Store the communicator size.
 ring_all_reduce_algorithm_t::ring_all_reduce_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
+// Reduce-scatter phase (pull+reduce) for the first N-1 steps, then all-gather (pull only);
+// both phases cross the fixed prev->next neighbour link with a signal/wait dependency.
 schedule_entry_t ring_all_reduce_algorithm_t::link_of(int /*pid*/,
                                                       int timestep,
                                                       int my_rank) const {
@@ -333,23 +382,30 @@ schedule_entry_t ring_all_reduce_algorithm_t::link_of(int /*pid*/,
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
+// Floored ring share (see ring_wgs_per_link).
 int ring_all_reduce_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
   return ring_wgs_per_link(num_wgs, num_gpus_);
 }
 
+// Workgroups distributed across the ring links (see ring_distribute).
 std::unordered_map<int, int> ring_all_reduce_algorithm_t::active_links(int /*timestep*/,
                                                                        int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
+// 2(N-1) hops: a reduce-scatter ring followed by an all-gather ring.
 int ring_all_reduce_algorithm_t::num_timesteps() const { return 2 * (num_gpus_ - 1); }
+// Each hop moves 1/N of the buffer.
 int ring_all_reduce_algorithm_t::chunks_per_timestep() const { return num_gpus_; }
+// Ring-class: eligible for the per-step overhead heuristic.
 bool ring_all_reduce_algorithm_t::is_ring_class() const { return true; }
+// Pipelined ring: priced by the closed-form throughput model.
 bool ring_all_reduce_algorithm_t::is_ring_pipeline() const { return true; }
 
-// ─── ring_broadcast_algorithm_t ──────────────────────────────────
+// Store the communicator size.
 ring_broadcast_algorithm_t::ring_broadcast_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
+// Each step loads locally, stores, and pushes the data to the next rank.
 schedule_entry_t ring_broadcast_algorithm_t::link_of(int /*pid*/,
                                                      int /*timestep*/,
                                                      int my_rank) const {
@@ -362,31 +418,38 @@ schedule_entry_t ring_broadcast_algorithm_t::link_of(int /*pid*/,
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
+// Floored ring share (see ring_wgs_per_link).
 int ring_broadcast_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
   return ring_wgs_per_link(num_wgs, num_gpus_);
 }
 
+// Workgroups distributed across the ring links (see ring_distribute).
 std::unordered_map<int, int> ring_broadcast_algorithm_t::active_links(int /*timestep*/,
                                                                       int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
+// N-1 ring hops.
 int ring_broadcast_algorithm_t::num_timesteps() const { return num_gpus_ - 1; }
+// Each hop moves 1/N of the buffer.
 int ring_broadcast_algorithm_t::chunks_per_timestep() const { return num_gpus_; }
 
-// ─── Standard collective constructors ───────────────────────────
+// All-gather: ring.
 std::unique_ptr<collective_algorithm_t> allgather_algorithm(int num_gpus) {
   return std::make_unique<ring_all_gather_algorithm_t>(num_gpus);
 }
 
+// Reduce-scatter: ring.
 std::unique_ptr<collective_algorithm_t> reduce_scatter_algorithm(int num_gpus) {
   return std::make_unique<ring_reduce_scatter_algorithm_t>(num_gpus);
 }
 
+// Broadcast: ring.
 std::unique_ptr<collective_algorithm_t> broadcast_algorithm(int num_gpus) {
   return std::make_unique<ring_broadcast_algorithm_t>(num_gpus);
 }
 
+// One-shot all-reduce: all-to-same schedule with a pull+reduce hop.
 std::unique_ptr<collective_algorithm_t> allreduce_one_shot_algorithm(int num_gpus) {
   auto wg = [](int peer, int /*my_rank*/, int /*N*/, bool is_self) -> std::vector<op_t> {
     if (is_self) return {load_t{}, reduce_t{}};
@@ -395,14 +458,17 @@ std::unique_ptr<collective_algorithm_t> allreduce_one_shot_algorithm(int num_gpu
   return std::make_unique<all_to_same_algorithm_t>(num_gpus, wg);
 }
 
+// Two-shot all-reduce: reduce-scatter shot then all-gather shot.
 std::unique_ptr<collective_algorithm_t> allreduce_two_shot_algorithm(int num_gpus) {
   return std::make_unique<two_shot_all_reduce_algorithm_t>(num_gpus);
 }
 
+// Ring all-reduce: bandwidth-optimal pipelined ring.
 std::unique_ptr<collective_algorithm_t> allreduce_ring_algorithm(int num_gpus) {
   return std::make_unique<ring_all_reduce_algorithm_t>(num_gpus);
 }
 
+// All-to-all: pid-staggered schedule with a load+push hop.
 std::unique_ptr<collective_algorithm_t> alltoall_algorithm(int num_gpus) {
   auto wg = [](int peer, int /*my_rank*/, int /*N*/, bool is_self) -> std::vector<op_t> {
     if (is_self) return {load_t{}, store_t{}};
@@ -411,7 +477,8 @@ std::unique_ptr<collective_algorithm_t> alltoall_algorithm(int num_gpus) {
   return std::make_unique<pid_staggered_algorithm_t>(num_gpus, wg);
 }
 
-// ─── resolve_algorithm ───────────────────────────────────────────
+// Map a (collective, algorithm) pair to a concrete algorithm; `automatic` picks each
+// collective's canonical default, and any undefined pairing throws rather than costing nonsense.
 std::unique_ptr<collective_algorithm_t> resolve_algorithm(primitive_t collective,
                                                           algorithm_t algorithm,
                                                           int num_gpus) {
@@ -444,6 +511,7 @@ std::unique_ptr<collective_algorithm_t> resolve_algorithm(primitive_t collective
                               std::string{primitive_name(collective)} + "'");
 }
 
+// Engine-facing overload: collective + num_gpus come from the problem, algorithm from the config.
 std::unique_ptr<collective_algorithm_t> resolve_algorithm(const comm_problem_t& problem,
                                                           const comm_config_t& config) {
   return resolve_algorithm(problem.collective, config.algorithm, problem.num_gpus);
