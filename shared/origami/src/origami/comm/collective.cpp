@@ -67,7 +67,7 @@ double compute_ring_latency(const collective_algorithm_t& algorithm,
 
   // The ring's sustainable rate is whichever ceiling binds first: the physical
   // link width, or the combined latency-limited throughput of the WGs feeding
-  // it (eff_wgs × per-WG cap). Few WGs ⇒ CU-limited; many WGs ⇒ link-limited.
+  // it (eff_wgs × per-WG cap). Few WGs -> CU-limited; many WGs -> link-limited.
   const double aggregate_bw =
       std::min(comm_hw.link_bw, static_cast<double>(eff_wgs) * mshr_bw_per_wg);
 
@@ -131,8 +131,10 @@ double compute_sequential_latency(const collective_algorithm_t& algorithm,
   const std::size_t wg_tile_cachelines = std::max<std::size_t>(wg_tile.cachelines(), 1);
   const std::size_t wg_tile_elements   = std::max<std::size_t>(wg_tile.elements(), 1);
 
-  // Timesteps are data-dependent here, so their latencies add up. Within a
-  // timestep, however, the links run in parallel — so a timestep costs the
+  // This loop is the iterative driver of the schedule: the algorithm methods are
+  // closed-form (one timestep per call), and stepping through the timeline happens
+  // here, not inside them. Timesteps are data-dependent, so their latencies add up.
+  // Within a timestep, however, the links run in parallel — so a timestep costs the
   // *slowest* link, not their sum (T_link_max below).
   double T_timesteps = 0.0;
   for (int timestep = 0; timestep < algorithm.num_timesteps(); ++timestep) {

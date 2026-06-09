@@ -37,7 +37,7 @@
 // direct consequence of the algorithm's dataflow:
 //   • num_timesteps()       — how many dependent communication rounds the
 //     algorithm takes (e.g. a ring visits N-1 peers; two-shot does N reduce
-//     rounds then N-1 broadcast rounds = 2N-1). More steps ⇒ more serial
+//     rounds then N-1 broadcast rounds = 2N-1). More steps -> more serial
 //     handshakes and, for sequential algorithms, more added latency.
 //   • chunks_per_timestep() — how finely each GPU's tile is sliced per step.
 //     A ring sends 1/N of the buffer per hop (chunks = N); a whole-tile step
@@ -45,8 +45,23 @@
 //   • active_links()        — how the workgroups spread across the links lit
 //     up this step, which sets per-link contention.
 //
-// Algorithms are closed-form functions over the rank topology, so they hold no
-// per-WG state and fold cheaply; virtual dispatch happens once per collective.
+// Closed-form vs iterative — where the loop lives:
+//   • Closed-form (here): every algorithm method answers ONE query directly from
+//     the rank topology, holding no per-round state. link_of(pid, timestep,
+//     my_rank) returns the schedule for exactly that one timestep; calling it
+//     again with timestep+1 is independent of the previous call. Nothing in an
+//     algorithm loops over the communication rounds.
+//   • Iterative (the caller): the cost engine in collective.cpp walks the
+//     timeline — `for timestep in [0, num_timesteps())` — invoking link_of and
+//     active_links once per round and summing the priced work. That external
+//     loop is the only place the schedule is actually "stepped through"; the
+//     staggered sweep through peers, for instance, emerges from successive
+//     timesteps, not from any loop inside link_of.
+//   • The small bounded loops you do see inside active_links / ring_distribute
+//     fill a map over the ≤ N-1 links of a SINGLE step — they build one step's
+//     data, they do not iterate the schedule.
+// Because the per-call work is closed-form and stateless, the algorithms fold
+// cheaply and virtual dispatch happens only once per collective.
 //
 // Self-timestep distinction: when a step maps a rank to itself, the data is
 // already local, so the work graph uses load_t (local HBM) instead of pull_t
@@ -137,6 +152,11 @@ class collective_algorithm_t {
 
   /**
    * @brief Resolve the link, peer, and work graph for one workgroup at a timestep.
+   *
+   * Closed-form and stateless: this returns the schedule for the single given
+   * timestep only and does not loop over rounds. The cost engine drives the
+   * timeline by calling it once per round (timestep = 0 .. num_timesteps()-1),
+   * so any "sweep" across peers emerges from successive calls, not from here.
    *
    * @param pid Workgroup (partition) id within the launch.
    * @param timestep Communication round index (0-based).

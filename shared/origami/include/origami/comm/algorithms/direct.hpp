@@ -95,7 +95,7 @@ class pid_staggered_algorithm_t : public collective_algorithm_t {
    */
   explicit pid_staggered_algorithm_t(int num_gpus, work_graph_fn_t wg_fn = {});
 
-  /// @brief Stagger the starting peer by pid, then step through peers, pulling each.
+  /// @brief Closed-form peer for one round: stagger the start by pid, advance by timestep, pull.
   schedule_entry_t link_of(int pid, int timestep, int my_rank) const override;
 
   /// @brief Spread the remote workgroups evenly across the N-1 links.

@@ -85,7 +85,8 @@ std::vector<op_t> all_to_same_algorithm_t::default_work_graph(int peer,
 pid_staggered_algorithm_t::pid_staggered_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
-// Offset the starting peer by pid, walk peers in order, and pull each.
+// Closed-form peer for one round: offset the start by pid, then advance by `timestep`
+// so successive calls sweep the ranks in order; pull from the resulting peer.
 schedule_entry_t pid_staggered_algorithm_t::link_of(int pid, int timestep, int my_rank) const {
   const int start    = floor_mod(pid, num_gpus_);
   const int peer_idx = floor_mod(start + timestep, num_gpus_);

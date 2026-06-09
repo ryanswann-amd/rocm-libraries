@@ -157,7 +157,7 @@ struct heuristics_t {
   /// The saturation rate k in util(wgs) = 1 − exp(−wgs/k) used by latency.hpp's
   /// xGMI-write block. Measured: one WG saturates only ~21% of a link, two
   /// ~38%, five ~65%, nine+ ~83% — the link needs many concurrent writers to
-  /// hide framing/turnaround. Smaller k ⇒ saturates with fewer WGs. Values are
+  /// hide framing/turnaround. Smaller k -> saturates with fewer WGs. Values are
   /// per primitive because their write-concentration patterns differ (e.g.
   /// all-reduce spreads writes thinner, so it needs a larger k).
   double xgmi_write_concentration_k_default = 4.0;
