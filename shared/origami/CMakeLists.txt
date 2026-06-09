@@ -95,6 +95,38 @@ target_sources(
               $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/tensor.hpp>
 )
 
+# ── origami::comm compiled library ───────────────────────────────────────────
+# The non-constexpr bodies of the comm model are compiled once here, instead of
+# being re-parsed inline in every consumer. The declarations and all constexpr
+# code still come from the headers (roc::origami-comm-headers). Like that
+# interface target, this library is pure C++17 and deliberately does NOT link
+# hip::host, so the collective cost model remains usable without a ROCm toolchain.
+if(ORIGAMI_BUILD_SHARED_LIBS OR (BUILD_SHARED_LIBS AND ORIGAMI_STANDALONE))
+    add_library(origami-comm SHARED)
+else()
+    add_library(origami-comm STATIC)
+endif()
+
+rocm_set_soversion(origami-comm "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
+
+add_library(roc::origami-comm ALIAS origami-comm)
+
+set_target_properties(origami-comm PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+target_compile_features(origami-comm PUBLIC cxx_std_17)
+target_link_libraries(origami-comm PUBLIC roc::origami-comm-headers)
+
+target_sources(
+    origami-comm
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/primitives.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/latency.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/algorithms.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/collective.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/tensor.cpp"
+)
+
 target_sources(
     origami
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/gemm.cpp"
@@ -120,13 +152,14 @@ if(ORIGAMI_BUILD_TESTING OR BUILD_TESTING)
 endif()
 
 if(ORIGAMI_ENABLE_INSTALL OR ORIGAMI_STANDALONE)
-    rocm_install(TARGETS origami origami-headers origami-comm-headers)
+    rocm_install(TARGETS origami origami-headers origami-comm-headers origami-comm)
 
     rocm_export_targets(
         TARGETS
         roc::origami
         roc::origami-headers
         roc::origami-comm-headers
+        roc::origami-comm
         DEPENDS
         PACKAGE
         hip

@@ -3,9 +3,9 @@
 
 # origami::comm byte-identity suite.
 #
-# Links the header-only roc::origami-comm-headers target (no HIP), so this
-# runner builds and runs without a ROCm toolchain. Catch2 is provided by the
-# parent tests/CMakeLists.txt (find_package or FetchContent).
+# Links the compiled roc::origami-comm library (no HIP), so this runner builds
+# and runs without a ROCm toolchain. Catch2 is provided by the parent
+# tests/CMakeLists.txt (find_package or FetchContent).
 
 add_executable(origami-comm-tests)
 
@@ -23,7 +23,7 @@ target_sources(
 )
 
 target_link_libraries(
-    origami-comm-tests PRIVATE roc::origami-comm-headers Catch2::Catch2WithMain
+    origami-comm-tests PRIVATE roc::origami-comm Catch2::Catch2WithMain
 )
 
 # Byte-identity corpora are read at runtime relative to this directory.

@@ -71,15 +71,7 @@ namespace origami::comm {
  * @return double Wire-byte multiplier per byte of user buffer.
  * @throws std::invalid_argument If op is not a known collective.
  */
-inline double wire_factor(std::string_view op, int world_size) {
-  const double n = static_cast<double>(world_size);
-  if (op == "all_reduce") return 2.0 * (n - 1.0) / n;
-  if (op == "all_gather") return (n - 1.0);
-  if (op == "reduce_scatter") return (n - 1.0);
-  if (op == "broadcast") return 1.0;
-  if (op == "all_to_all") return (n - 1.0) / n;
-  throw std::invalid_argument(std::string{"unknown op: "} + std::string{op});
-}
+double wire_factor(std::string_view op, int world_size);
 
 /**
  * @brief Convert a per-rank byte count into predict_row's msg_bytes convention.
@@ -94,12 +86,9 @@ inline double wire_factor(std::string_view op, int world_size) {
  * @param world_size Number of participating ranks.
  * @return std::size_t msg_bytes in predict_row's convention.
  */
-inline std::size_t msg_bytes_for_predict_row(std::string_view op,
-                                             std::size_t per_rank_bytes,
-                                             int world_size) {
-  if (op == "reduce_scatter") { return per_rank_bytes * static_cast<std::size_t>(world_size); }
-  return per_rank_bytes;
-}
+std::size_t msg_bytes_for_predict_row(std::string_view op,
+                                      std::size_t per_rank_bytes,
+                                      int world_size);
 
 // ─── dtype normalization ─────────────────────────────────────────
 /**
@@ -112,27 +101,7 @@ inline std::size_t msg_bytes_for_predict_row(std::string_view op,
  * @return data_type_t The matching enum value.
  * @throws std::invalid_argument If the dtype name is unsupported.
  */
-inline data_type_t normalize_dtype(std::string_view dt) {
-  auto strip = [](std::string s) {
-    // Lowercase + strip common prefixes.
-    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    auto erase_prefix = [&](std::string_view p) {
-      if (s.rfind(p, 0) == 0) s.erase(0, p.size());
-    };
-    erase_prefix("torch.");
-    erase_prefix("np.");
-    erase_prefix("numpy.");
-    return s;
-  };
-  const std::string key = strip(std::string{dt});
-  if (key == "bf16" || key == "bfloat16") return data_type_t::BFloat16;
-  if (key == "fp16" || key == "float16" || key == "half") return data_type_t::Half;
-  if (key == "fp32" || key == "float32" || key == "float") return data_type_t::Float;
-  if (key == "fp64" || key == "float64" || key == "double") return data_type_t::Double;
-  if (key == "fp8") return data_type_t::Float8;
-  if (key == "int8") return data_type_t::Int8;
-  throw std::invalid_argument(std::string{"unsupported dtype: "} + std::string{dt});
-}
+data_type_t normalize_dtype(std::string_view dt);
 
 /**
  * @brief Identity overload: a data_type_t is already normalized.
@@ -140,7 +109,7 @@ inline data_type_t normalize_dtype(std::string_view dt) {
  * @param dt The dtype enum value.
  * @return data_type_t The same value, unchanged.
  */
-inline data_type_t normalize_dtype(data_type_t dt) noexcept { return dt; }
+data_type_t normalize_dtype(data_type_t dt) noexcept;
 
 // ─── Shape → (M_full, N_full, split_dim) lowering ───────────────
 /**
@@ -177,33 +146,7 @@ struct full_mn_t {
  * @throws std::invalid_argument On empty shape, non-positive entries,
  *         world_size < 1, or dim out of range.
  */
-inline full_mn_t per_rank_shape_to_full_mn(const std::vector<std::size_t>& shape,
-                                           int dim,
-                                           int world_size) {
-  if (shape.empty()) {
-    throw std::invalid_argument("input_shape must have at least one dimension");
-  }
-  for (auto d : shape) {
-    if (d == 0) { throw std::invalid_argument("input_shape has non-positive entries"); }
-  }
-  if (world_size < 1) { throw std::invalid_argument("world_size must be >= 1"); }
-
-  const int rank_ndim = static_cast<int>(shape.size());
-  const int norm_dim  = (dim >= 0) ? dim : dim + rank_ndim;
-  if (norm_dim < 0 || norm_dim >= rank_ndim) {
-    throw std::invalid_argument("dim out of range for input_shape");
-  }
-
-  const std::size_t n_per_rank = shape.back();
-  std::size_t m_per_rank       = 1;
-  for (int i = 0; i + 1 < rank_ndim; ++i) m_per_rank *= shape[i];
-
-  const int last_dim = rank_ndim - 1;
-  if (norm_dim == last_dim) {
-    return {m_per_rank, n_per_rank * static_cast<std::size_t>(world_size), 1};
-  }
-  return {m_per_rank * static_cast<std::size_t>(world_size), n_per_rank, 0};
-}
+full_mn_t per_rank_shape_to_full_mn(const std::vector<std::size_t>& shape, int dim, int world_size);
 
 /**
  * @brief Result of a shape-aware tensor collective prediction.
@@ -261,11 +204,7 @@ inline constexpr std::string_view SUPPORTED_OPS[] = {"all_reduce",
  * @param op Collective name to test.
  * @return bool True if op is in SUPPORTED_OPS, false otherwise.
  */
-inline bool is_supported_op(std::string_view op) {
-  for (const auto& s : SUPPORTED_OPS)
-    if (s == op) return true;
-  return false;
-}
+bool is_supported_op(std::string_view op);
 
 /**
  * @brief Shape-aware tensor collective prediction (typed-dtype overload).
@@ -286,7 +225,7 @@ inline bool is_supported_op(std::string_view op) {
  * @return tensor_collective_prediction_t Prediction plus inputs and derived data.
  * @throws std::invalid_argument On unsupported op or world_size < 1.
  */
-inline tensor_collective_prediction_t predict_tensor_collective(
+tensor_collective_prediction_t predict_tensor_collective(
     std::string_view op,
     const std::vector<std::size_t>& input_shape,
     data_type_t dtype,
@@ -295,86 +234,7 @@ inline tensor_collective_prediction_t predict_tensor_collective(
     int nchannels              = 32,
     const system_t& system     = MI300X_SYSTEM,
     std::string_view framework = "raw",
-    const heuristics_t& heur   = DEFAULT_HEURISTICS) {
-  if (!is_supported_op(op)) {
-    throw std::invalid_argument(std::string{"unsupported op: "} + std::string{op});
-  }
-  if (world_size < 1) { throw std::invalid_argument("world_size must be >= 1"); }
-
-  const int eb = dtype_bytes(dtype);
-
-  const double overhead_us = heur.framework_overhead_us(framework);
-
-  // Degenerate: W=1 is a no-op for every collective, but the framework
-  // still pays its overhead.
-  if (world_size == 1) {
-    std::size_t per_rank_elements = 1;
-    for (auto d : input_shape) per_rank_elements *= d;
-    const std::size_t per_rank_bytes_w1 = per_rank_elements * static_cast<std::size_t>(eb);
-
-    tile_shape_t gpu_tile_w1;
-    if (!input_shape.empty()) {
-      const std::size_t n_last = input_shape.back();
-      std::size_t outer        = 1;
-      for (std::size_t i = 0; i + 1 < input_shape.size(); ++i) outer *= input_shape[i];
-      gpu_tile_w1 = tile_shape_t{outer, n_last, dtype, /*split_dim=*/0, /*contiguous=*/true};
-    }
-
-    tensor_collective_prediction_t out{};
-    out.predicted_us          = overhead_us;
-    out.op                    = std::string{op};
-    out.input_shape           = input_shape;
-    out.dim                   = dim;
-    out.world_size            = 1;
-    out.nchannels             = nchannels;
-    out.dtype                 = dtype;
-    out.per_rank_bytes        = per_rank_bytes_w1;
-    out.wire_bytes_per_rank   = 0;
-    out.msg_bytes             = per_rank_bytes_w1;
-    out.gpu_tile              = gpu_tile_w1;
-    out.framework             = std::string{framework};
-    out.framework_overhead_us = overhead_us;
-    return out;
-  }
-
-  std::size_t per_rank_elements = 1;
-  for (auto d : input_shape) per_rank_elements *= d;
-  const std::size_t per_rank_bytes = per_rank_elements * static_cast<std::size_t>(eb);
-
-  const std::size_t wire_bytes_per_rank =
-      static_cast<std::size_t>(wire_factor(op, world_size) * static_cast<double>(per_rank_bytes));
-
-  const auto full             = per_rank_shape_to_full_mn(input_shape, dim, world_size);
-  const std::size_t msg_bytes = msg_bytes_for_predict_row(op, per_rank_bytes, world_size);
-
-  const double backend_us = predict_row(
-      op, msg_bytes, world_size, nchannels, system, full.M_full, full.N_full, full.split_dim, heur);
-
-  const double predicted_us = backend_us + overhead_us;
-
-  tile_shape_t gpu_tile{
-      (full.split_dim == 0) ? full.M_full / static_cast<std::size_t>(world_size) : full.M_full,
-      (full.split_dim == 1) ? full.N_full / static_cast<std::size_t>(world_size) : full.N_full,
-      dtype,
-      full.split_dim,
-      /*contiguous=*/true};
-
-  tensor_collective_prediction_t out{};
-  out.predicted_us          = predicted_us;
-  out.op                    = std::string{op};
-  out.input_shape           = input_shape;
-  out.dim                   = dim;
-  out.world_size            = world_size;
-  out.nchannels             = nchannels;
-  out.dtype                 = dtype;
-  out.per_rank_bytes        = per_rank_bytes;
-  out.wire_bytes_per_rank   = wire_bytes_per_rank;
-  out.msg_bytes             = msg_bytes;
-  out.gpu_tile              = gpu_tile;
-  out.framework             = std::string{framework};
-  out.framework_overhead_us = overhead_us;
-  return out;
-}
+    const heuristics_t& heur   = DEFAULT_HEURISTICS);
 
 /**
  * @brief Shape-aware tensor collective prediction (string-dtype convenience
@@ -395,7 +255,7 @@ inline tensor_collective_prediction_t predict_tensor_collective(
  * @throws std::invalid_argument On unsupported op, world_size < 1, or unsupported
  *         dtype.
  */
-inline tensor_collective_prediction_t predict_tensor_collective(
+tensor_collective_prediction_t predict_tensor_collective(
     std::string_view op,
     const std::vector<std::size_t>& input_shape,
     std::string_view dtype_name,
@@ -404,16 +264,6 @@ inline tensor_collective_prediction_t predict_tensor_collective(
     int nchannels              = 32,
     const system_t& system     = MI300X_SYSTEM,
     std::string_view framework = "raw",
-    const heuristics_t& heur   = DEFAULT_HEURISTICS) {
-  return predict_tensor_collective(op,
-                                   input_shape,
-                                   normalize_dtype(dtype_name),
-                                   world_size,
-                                   dim,
-                                   nchannels,
-                                   system,
-                                   framework,
-                                   heur);
-}
+    const heuristics_t& heur   = DEFAULT_HEURISTICS);
 
 }  // namespace origami::comm

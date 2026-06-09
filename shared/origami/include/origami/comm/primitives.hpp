@@ -296,23 +296,6 @@ struct resolved_work_t {
  * @param iter Sizing of one software-pipelined iteration.
  * @return resolved_work_t The summed iter_work and sync_work for the step.
  */
-inline resolved_work_t resolve_work_graph(const std::vector<op_t>& ops,
-                                          const iter_dims_t& iter) noexcept {
-  resolved_work_t out{};
-  for (const op_t& op : ops) {
-    std::visit(
-        [&](const auto& concrete) {
-          using T                        = std::decay_t<decltype(concrete)>;
-          const functional_unit_work_t w = concrete.resolve(iter);
-          if constexpr (std::is_same_v<T, signal_t> || std::is_same_v<T, wait_t>) {
-            out.sync_work += w;
-          } else {
-            out.iter_work += w;
-          }
-        },
-        op);
-  }
-  return out;
-}
+resolved_work_t resolve_work_graph(const std::vector<op_t>& ops, const iter_dims_t& iter) noexcept;
 
 }  // namespace origami::comm

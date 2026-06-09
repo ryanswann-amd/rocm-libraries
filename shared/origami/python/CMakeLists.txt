@@ -61,8 +61,16 @@ set_target_properties(_pyorigami PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/src/origami"
 )
 
-# Link against origami library and HIP
-target_link_libraries(_pyorigami PRIVATE ${ORIGAMI_TARGET} hip::host)
+# Link against origami library and HIP. The comm bindings need the compiled
+# (hip-free) origami-comm library for the collective cost model's out-of-line
+# symbols; it is created alongside roc::origami in the parent CMake tree.
+set(ORIGAMI_COMM_TARGET "")
+if(TARGET roc::origami-comm)
+    set(ORIGAMI_COMM_TARGET roc::origami-comm)
+elseif(TARGET origami-comm)
+    set(ORIGAMI_COMM_TARGET origami-comm)
+endif()
+target_link_libraries(_pyorigami PRIVATE ${ORIGAMI_TARGET} ${ORIGAMI_COMM_TARGET} hip::host)
 
 set_target_properties(_pyorigami PROPERTIES
     CXX_STANDARD 17                    # We can make this optional too if we want to support newer standards
