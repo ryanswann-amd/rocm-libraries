@@ -33,10 +33,13 @@
 
 namespace origami::comm {
 
-// all_to_same: sequential collective where every workgroup targets the same single
-// link each timestep, visiting the N-1 remote peers one per round (self is skipped).
-// Backs one-shot all-reduce and the sequential all-to-all.
-//
+// ═════════════════════════════════════════════════════════════════════════════
+// all_to_same_algorithm_t
+// ═════════════════════════════════════════════════════════════════════════════
+// Sequential collective where every workgroup targets the same single link each
+// timestep, visiting the N-1 remote peers one per round (self is skipped). Backs
+// one-shot all-reduce and the sequential all-to-all.
+
 // Store the communicator size and the per-hop work-graph closure (default: pull+store).
 all_to_same_algorithm_t::all_to_same_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
@@ -71,10 +74,13 @@ std::vector<op_t> all_to_same_algorithm_t::default_work_graph(int peer,
   return {pull_t{peer}, store_t{}};
 }
 
-// pid_staggered: direct collective whose starting peer is offset by the workgroup's
-// pid, so workgroups fan out uniformly over the N-1 remote links; includes a
-// self-timestep. Backs two-shot all-reduce/reduce-scatter and all-to-all.
-//
+// ═════════════════════════════════════════════════════════════════════════════
+// pid_staggered_algorithm_t
+// ═════════════════════════════════════════════════════════════════════════════
+// Direct collective whose starting peer is offset by the workgroup's pid, so
+// workgroups fan out uniformly over the N-1 remote links; includes a self-timestep.
+// Backs two-shot all-reduce/reduce-scatter and all-to-all.
+
 // Store the communicator size and the per-hop work-graph closure (default: pull+reduce).
 pid_staggered_algorithm_t::pid_staggered_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
@@ -121,10 +127,13 @@ std::vector<op_t> pid_staggered_algorithm_t::default_work_graph(int peer,
   return {pull_t{peer}, reduce_t{}};
 }
 
-// pid_partitioned: single-step collective where each workgroup is permanently bound
-// to one destination link by its pid and pushes there, so every destination is served
-// in a single timestep (partitioned all-gather).
-//
+// ═════════════════════════════════════════════════════════════════════════════
+// pid_partitioned_algorithm_t
+// ═════════════════════════════════════════════════════════════════════════════
+// Single-step collective where each workgroup is permanently bound to one
+// destination link by its pid and pushes there, so every destination is served in
+// a single timestep (partitioned all-gather).
+
 // Store the communicator size and the per-hop work-graph closure (default: load+push).
 pid_partitioned_algorithm_t::pid_partitioned_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
@@ -166,10 +175,13 @@ std::vector<op_t> pid_partitioned_algorithm_t::default_work_graph(int peer,
   return {load_t{}, push_t{peer}};
 }
 
-// two_shot_all_reduce: all-reduce factored into two shots — a reduce-scatter (N reduce
-// steps, including the self-step) followed by an all-gather (N-1 broadcast steps). 2N-1
-// rounds total, each moving 1/N of the buffer.
-//
+// ═════════════════════════════════════════════════════════════════════════════
+// two_shot_all_reduce_algorithm_t
+// ═════════════════════════════════════════════════════════════════════════════
+// All-reduce factored into two shots — a reduce-scatter (N reduce steps, including
+// the self-step) followed by an all-gather (N-1 broadcast steps). 2N-1 rounds
+// total, each moving 1/N of the buffer.
+
 // Store the communicator size.
 two_shot_all_reduce_algorithm_t::two_shot_all_reduce_algorithm_t(int num_gpus)
     : num_gpus_{num_gpus} {}

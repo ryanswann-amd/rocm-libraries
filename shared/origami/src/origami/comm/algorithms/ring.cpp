@@ -33,6 +33,11 @@
 
 namespace origami::comm {
 
+// ═════════════════════════════════════════════════════════════════════════════
+// Shared ring helpers
+// ═════════════════════════════════════════════════════════════════════════════
+// Workgroup-to-link distribution used by every ring algorithm below.
+
 // Spread num_wgs over the ring links, conserving the total: each of the
 // nrings=min(num_wgs, N-1) links gets floor(num_wgs/nrings), and the first
 // `extra` links take one more so the counts sum back to num_wgs.
@@ -51,10 +56,13 @@ int ring_wgs_per_link(int num_wgs, int num_gpus) noexcept {
   return std::max(num_wgs / nrings, 1);
 }
 
-// ring_fixed: pipelined ring whose every hop crosses the fixed next-rank neighbour link,
-// carrying a wait/signal producer->consumer dependency between adjacent ranks (the older
-// ring all-reduce form).
-//
+// ═════════════════════════════════════════════════════════════════════════════
+// ring_fixed_algorithm_t
+// ═════════════════════════════════════════════════════════════════════════════
+// Pipelined ring whose every hop crosses the fixed next-rank neighbour link,
+// carrying a wait/signal producer->consumer dependency between adjacent ranks (the
+// older ring all-reduce form).
+
 // Store the communicator size and the per-hop work-graph closure (default: reduce-ring with
 // signal/wait).
 ring_fixed_algorithm_t::ring_fixed_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
@@ -104,9 +112,12 @@ std::vector<op_t> ring_fixed_algorithm_t::default_work_graph(int /*peer*/,
   };
 }
 
-// ring_all_gather: all-gather as an N-1 hop ring, each step loading locally and forwarding
-// its slice to the next rank.
-//
+// ═════════════════════════════════════════════════════════════════════════════
+// ring_all_gather_algorithm_t
+// ═════════════════════════════════════════════════════════════════════════════
+// All-gather as an N-1 hop ring, each step loading locally and forwarding its slice
+// to the next rank.
+
 // Store the communicator size.
 ring_all_gather_algorithm_t::ring_all_gather_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
@@ -141,9 +152,12 @@ int ring_all_gather_algorithm_t::chunks_per_timestep() const { return 1; }
 // Ring-class: eligible for the per-step overhead heuristic.
 bool ring_all_gather_algorithm_t::is_ring_class() const { return true; }
 
-// ring_reduce_scatter: the all-gather ring with a reduce on every hop, so each step
-// loads, reduces, stores, and forwards the slice to the next rank.
-//
+// ═════════════════════════════════════════════════════════════════════════════
+// ring_reduce_scatter_algorithm_t
+// ═════════════════════════════════════════════════════════════════════════════
+// The all-gather ring with a reduce on every hop, so each step loads, reduces,
+// stores, and forwards the slice to the next rank.
+
 // Store the communicator size.
 ring_reduce_scatter_algorithm_t::ring_reduce_scatter_algorithm_t(int num_gpus)
     : num_gpus_{num_gpus} {}
@@ -180,10 +194,13 @@ int ring_reduce_scatter_algorithm_t::chunks_per_timestep() const { return 1; }
 // Ring-class: eligible for the per-step overhead heuristic.
 bool ring_reduce_scatter_algorithm_t::is_ring_class() const { return true; }
 
-// ring_all_reduce: bandwidth-optimal all-reduce — a reduce-scatter ring then an all-gather
-// ring, 2(N-1) hops all crossing the same neighbour link, making it a true pipelined ring
+// ═════════════════════════════════════════════════════════════════════════════
+// ring_all_reduce_algorithm_t
+// ═════════════════════════════════════════════════════════════════════════════
+// Bandwidth-optimal all-reduce — a reduce-scatter ring then an all-gather ring,
+// 2(N-1) hops all crossing the same neighbour link, making it a true pipelined ring
 // priced by aggregate throughput rather than a sum of per-step latencies.
-//
+
 // Store the communicator size.
 ring_all_reduce_algorithm_t::ring_all_reduce_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
@@ -237,9 +254,12 @@ bool ring_all_reduce_algorithm_t::is_ring_class() const { return true; }
 // Pipelined ring: priced by the closed-form throughput model.
 bool ring_all_reduce_algorithm_t::is_ring_pipeline() const { return true; }
 
-// ring_broadcast: broadcast as an N-1 hop ring pipeline, each step forwarding the root's
-// data to the next-rank neighbour.
-//
+// ═════════════════════════════════════════════════════════════════════════════
+// ring_broadcast_algorithm_t
+// ═════════════════════════════════════════════════════════════════════════════
+// Broadcast as an N-1 hop ring pipeline, each step forwarding the root's data to
+// the next-rank neighbour.
+
 // Store the communicator size.
 ring_broadcast_algorithm_t::ring_broadcast_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
