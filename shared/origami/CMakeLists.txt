@@ -90,6 +90,10 @@ target_sources(
               $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/heuristics.hpp>
               $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/primitives.hpp>
               $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/algorithms.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/algorithms/base.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/algorithms/direct.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/algorithms/ring.hpp>
+              $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/algorithms/resolve.hpp>
               $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/latency.hpp>
               $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/collective.hpp>
               $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/tensor.hpp>
@@ -122,7 +126,9 @@ target_sources(
     origami-comm
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/primitives.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/latency.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/algorithms.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/algorithms/direct.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/algorithms/ring.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/algorithms/resolve.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/collective.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/tensor.cpp"
 )
