@@ -99,11 +99,6 @@ constexpr std::string_view framework_name(framework_t f) noexcept {
  * `predict_tensor_collective`.
  */
 struct heuristics_t {
-  /// The MI300X clock used at C++ scope to convert the *_NS table
-  /// (host-meaningful units) into cycles (model-internal units). If
-  /// you ever override clock_ghz at study time, recompute these.
-  static constexpr double MI300X_CLOCK_GHZ = 2.0;
-
   // ── WG-cap heuristic ────────────────────────────────────────
   /// Minimum useful work per workgroup (see comm_config_t::effective_num_wgs).
   /// Below this, the per-WG launch/sync constants outweigh the bandwidth a WG
@@ -139,15 +134,17 @@ struct heuristics_t {
       0.0,        // mpi
   };
 
-  // ── Per-ring-step proxy/sync overhead (GPU cycles) ──────────
+  // ── Per-ring-step proxy/sync overhead (host nanoseconds) ────
   /// Every ring step incurs a CPU-mediated proxy handshake the bandwidth model
   /// cannot see; left at zero it produces a flat ~130 µs underestimate on small
   /// all-gather. The fit charges it per step: AG ~10 µs, RS ~4 µs, others
   /// negligible (AG is the most write/handshake-bound). Adding this term drops
-  /// AG MdAPE from ~45% to single digits. Stored in cycles via MI300X_CLOCK_GHZ.
-  std::array<double, 5> ring_step_overhead_cycles = {
-      /* all_gather     */ 10'000.0 * MI300X_CLOCK_GHZ,
-      /* reduce_scatter */ 4'000.0 * MI300X_CLOCK_GHZ,
+  /// AG MdAPE from ~45% to single digits. Stored in nanoseconds (host wall time,
+  /// the unit it is measured in); the engine converts to cycles at the target
+  /// GPU clock, so the value is clock-invariant and carries no MI300X assumption.
+  std::array<double, 5> ring_step_overhead_ns = {
+      /* all_gather     */ 10'000.0,
+      /* reduce_scatter */ 4'000.0,
       /* broadcast      */ 0.0,
       /* all_reduce     */ 0.0,
       /* all_to_all     */ 0.0,
@@ -198,23 +195,23 @@ struct heuristics_t {
   }
 
   /**
-   * @brief Per-ring-step proxy/sync overhead for a primitive, in cycles.
+   * @brief Per-ring-step proxy/sync overhead for a primitive, in nanoseconds.
    *
    * @param p Communication primitive.
-   * @return double Per-step overhead in cycles.
+   * @return double Per-step overhead in nanoseconds (host wall time).
    */
-  constexpr double ring_step_overhead(primitive_t p) const noexcept {
-    return ring_step_overhead_cycles[static_cast<std::size_t>(p)];
+  constexpr double ring_step_overhead_ns_for(primitive_t p) const noexcept {
+    return ring_step_overhead_ns[static_cast<std::size_t>(p)];
   }
   /**
-   * @brief Per-ring-step proxy/sync overhead, looked up by name.
+   * @brief Per-ring-step proxy/sync overhead, looked up by name, in nanoseconds.
    *
    * @param name Primitive name (see PRIMITIVE_NAMES).
-   * @return double Per-step overhead in cycles, or 0 if the name is unknown.
+   * @return double Per-step overhead in nanoseconds, or 0 if the name is unknown.
    */
-  constexpr double ring_step_overhead(std::string_view name) const noexcept {
+  constexpr double ring_step_overhead_ns_for(std::string_view name) const noexcept {
     for (std::size_t i = 0; i < PRIMITIVE_NAMES.size(); ++i) {
-      if (PRIMITIVE_NAMES[i] == name) { return ring_step_overhead_cycles[i]; }
+      if (PRIMITIVE_NAMES[i] == name) { return ring_step_overhead_ns[i]; }
     }
     return 0.0;
   }

@@ -55,16 +55,18 @@ TEST(default_heuristics_xgmi_k_by_primitive_string) {
   CHECK_NEAR(DEFAULT_HEURISTICS.k_xgmi_write("not_a_primitive"), 4.0, 1e-12);
 }
 
-TEST(default_heuristics_ring_step_overhead_cycles) {
-  // AG = 10000 ns × 2 GHz = 20000 cycles.
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::all_gather), 20000.0, 1e-9);
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::reduce_scatter), 8000.0, 1e-9);
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::broadcast), 0.0, 1e-9);
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::all_reduce), 0.0, 1e-9);
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::all_to_all), 0.0, 1e-9);
+TEST(default_heuristics_ring_step_overhead_ns) {
+  // Stored in host nanoseconds (clock-invariant); the engine converts to cycles
+  // at the target GPU clock.
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::all_gather), 10000.0, 1e-9);
+  CHECK_NEAR(
+      DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::reduce_scatter), 4000.0, 1e-9);
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::broadcast), 0.0, 1e-9);
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::all_reduce), 0.0, 1e-9);
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::all_to_all), 0.0, 1e-9);
   // String overload.
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead("all_gather"), 20000.0, 1e-9);
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead("???"), 0.0, 1e-9);
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for("all_gather"), 10000.0, 1e-9);
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for("???"), 0.0, 1e-9);
 }
 
 TEST(default_heuristics_framework_overhead_us) {

@@ -76,11 +76,15 @@ namespace origami::comm {
  * @param primitive Collective being run (keys the per-step heuristic).
  * @param algorithm Resolved collective algorithm (provides timestep count and class).
  * @param heur Tunable heuristic parameters.
+ * @param fabric Fabric hardware, whose clock converts the host-time heuristic to
+ *        cycles (the heuristic is stored in nanoseconds, so this carries no
+ *        fixed-clock assumption).
  * @return double Total ring-step overhead in GPU cycles (0 if not ring-class).
  */
 double ring_step_overhead_cycles(primitive_t primitive,
                                  const collective_algorithm_t& algorithm,
-                                 const heuristics_t& heur);
+                                 const heuristics_t& heur,
+                                 const comm_hardware_t& fabric);
 
 // The (collective, algorithm) → implementation resolution lives in
 // algorithms.hpp as resolve_algorithm(); compute_collective_latency_for_rank

@@ -85,12 +85,24 @@ TEST(byteid_mi300x_mem_bw_coeffs) {
 
 // ─── heuristics_t ─────────────────────────────────────────────────
 TEST(byteid_default_heuristics_ring_step_overhead) {
-  // 10000 × 2 = 20000 (exact). 4000 × 2 = 8000 (exact).
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::all_gather), 20000.0, 0.0);
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::reduce_scatter), 8000.0, 0.0);
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::broadcast), 0.0, 0.0);
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::all_reduce), 0.0, 0.0);
-  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead(primitive_t::all_to_all), 0.0, 0.0);
+  // Stored in host nanoseconds (exact).
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::all_gather), 10000.0, 0.0);
+  CHECK_NEAR(
+      DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::reduce_scatter), 4000.0, 0.0);
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::broadcast), 0.0, 0.0);
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::all_reduce), 0.0, 0.0);
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::all_to_all), 0.0, 0.0);
+  // At the MI300X 2.0 GHz clock the engine converts these to the historical
+  // cycle values (ns × clock_ghz: 10000 × 2 = 20000, 4000 × 2 = 8000), so
+  // end-to-end latencies remain byte-identical.
+  CHECK_NEAR(
+      DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::all_gather) * MI300X_COMM.clock_ghz,
+      20000.0,
+      0.0);
+  CHECK_NEAR(DEFAULT_HEURISTICS.ring_step_overhead_ns_for(primitive_t::reduce_scatter) *
+                 MI300X_COMM.clock_ghz,
+             8000.0,
+             0.0);
 }
 
 TEST(byteid_default_heuristics_framework_overhead) {
