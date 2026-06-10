@@ -32,7 +32,6 @@
 
 #include "origami/comm/algorithms/base.hpp"
 
-#include <unordered_map>
 #include <vector>
 
 namespace origami::comm {
@@ -60,7 +59,7 @@ class all_to_same_algorithm_t : public collective_algorithm_t {
   int wgs_on_link(int timestep, int num_wgs) const override;
 
   /// @brief Exactly one link is active per timestep, carrying all num_wgs workgroups.
-  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> active_links(int timestep, int num_wgs) const override;
 
   /// @brief N-1 rounds, one per remote peer.
   int num_timesteps() const override;
@@ -102,7 +101,7 @@ class pid_staggered_algorithm_t : public collective_algorithm_t {
   int wgs_on_link(int timestep, int num_wgs) const override;
 
   /// @brief All N-1 links are active each timestep with the remote workgroups spread evenly.
-  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> active_links(int timestep, int num_wgs) const override;
 
   /// @brief N rounds, including the self-timestep.
   int num_timesteps() const override;
@@ -146,7 +145,7 @@ class pid_partitioned_algorithm_t : public collective_algorithm_t {
   int wgs_on_link(int timestep, int num_wgs) const override;
 
   /// @brief All N-1 remote links are active with workgroups partitioned evenly across them.
-  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> active_links(int timestep, int num_wgs) const override;
 
   /// @brief A single timestep: every destination is served at once.
   int num_timesteps() const override;
@@ -191,7 +190,7 @@ class two_shot_all_reduce_algorithm_t : public collective_algorithm_t {
   int wgs_on_link(int timestep, int num_wgs) const override;
 
   /// @brief All N-1 links active each step, workgroups spread evenly across them.
-  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> active_links(int timestep, int num_wgs) const override;
 
   /// @brief 2N-1 rounds: N reduce steps (incl. self) then N-1 broadcast steps.
   int num_timesteps() const override;

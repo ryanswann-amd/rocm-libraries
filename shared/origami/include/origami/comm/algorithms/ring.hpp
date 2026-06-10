@@ -33,7 +33,6 @@
 
 #include "origami/comm/algorithms/base.hpp"
 
-#include <unordered_map>
 #include <vector>
 
 namespace origami::comm {
@@ -54,9 +53,9 @@ namespace origami::comm {
  *
  * @param num_wgs Total workgroups to distribute.
  * @param num_gpus Communicator size (bounds the ring link count at N-1).
- * @return Map from ring link id to its workgroup count; the values sum to num_wgs.
+ * @return Per-ring workgroup count (one entry per ring link); the values sum to num_wgs.
  */
-std::unordered_map<int, int> ring_distribute(int num_wgs, int num_gpus);
+std::vector<int> ring_distribute(int num_wgs, int num_gpus);
 
 /**
  * @brief Workgroups per ring link, the floored share used to price per-link contention.
@@ -90,7 +89,7 @@ class ring_fixed_algorithm_t : public collective_algorithm_t {
   int wgs_on_link(int timestep, int num_wgs) const override;
 
   /// @brief Workgroups distributed across the ring links (see ring_distribute).
-  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> active_links(int timestep, int num_wgs) const override;
 
   /// @brief N-1 ring hops.
   int num_timesteps() const override;
@@ -136,7 +135,7 @@ class ring_all_gather_algorithm_t : public collective_algorithm_t {
   int wgs_on_link(int timestep, int num_wgs) const override;
 
   /// @brief Workgroups distributed across the ring links (see ring_distribute).
-  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> active_links(int timestep, int num_wgs) const override;
 
   /// @brief N-1 ring hops.
   int num_timesteps() const override;
@@ -172,7 +171,7 @@ class ring_reduce_scatter_algorithm_t : public collective_algorithm_t {
   int wgs_on_link(int timestep, int num_wgs) const override;
 
   /// @brief Workgroups distributed across the ring links (see ring_distribute).
-  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> active_links(int timestep, int num_wgs) const override;
 
   /// @brief N-1 ring hops.
   int num_timesteps() const override;
@@ -212,7 +211,7 @@ class ring_all_reduce_algorithm_t : public collective_algorithm_t {
   int wgs_on_link(int timestep, int num_wgs) const override;
 
   /// @brief Workgroups distributed across the ring links (see ring_distribute).
-  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> active_links(int timestep, int num_wgs) const override;
 
   /// @brief 2(N-1) hops: a reduce-scatter ring followed by an all-gather ring.
   int num_timesteps() const override;
@@ -249,7 +248,7 @@ class ring_broadcast_algorithm_t : public collective_algorithm_t {
   int wgs_on_link(int timestep, int num_wgs) const override;
 
   /// @brief Workgroups distributed across the ring links (see ring_distribute).
-  std::unordered_map<int, int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> active_links(int timestep, int num_wgs) const override;
 
   /// @brief N-1 ring hops.
   int num_timesteps() const override;

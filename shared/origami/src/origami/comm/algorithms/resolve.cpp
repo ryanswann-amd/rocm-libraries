@@ -53,7 +53,7 @@ std::unique_ptr<collective_algorithm_t> broadcast_algorithm(int num_gpus) {
 
 // One-shot all-reduce: all-to-same schedule with a pull+reduce hop.
 std::unique_ptr<collective_algorithm_t> allreduce_one_shot_algorithm(int num_gpus) {
-  auto wg = [](int peer, int /*my_rank*/, int /*N*/, bool is_self) -> std::vector<op_t> {
+  auto wg = [](int peer, int my_rank, int num_gpus, bool is_self) -> std::vector<op_t> {
     if (is_self) return {load_t{}, reduce_t{}};
     return {pull_t{peer}, reduce_t{}};
   };
@@ -72,7 +72,7 @@ std::unique_ptr<collective_algorithm_t> allreduce_ring_algorithm(int num_gpus) {
 
 // All-to-all: pid-staggered schedule with a load+push hop.
 std::unique_ptr<collective_algorithm_t> alltoall_algorithm(int num_gpus) {
-  auto wg = [](int peer, int /*my_rank*/, int /*N*/, bool is_self) -> std::vector<op_t> {
+  auto wg = [](int peer, int my_rank, int num_gpus, bool is_self) -> std::vector<op_t> {
     if (is_self) return {load_t{}, store_t{}};
     return {load_t{}, push_t{peer}};
   };

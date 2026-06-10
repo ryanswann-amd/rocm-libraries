@@ -220,7 +220,7 @@ TEST(ring_active_links_conserves_num_wgs) {
       auto L  = allgather_algorithm(N);
       auto al = L->active_links(/*timestep=*/0, /*num_wgs=*/nch);
       int sum = 0;
-      for (auto& [k, v] : al) sum += v;
+      for (int v : al) sum += v;
       CHECK(sum == nch);
     }
   }

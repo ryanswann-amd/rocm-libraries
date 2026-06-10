@@ -27,7 +27,6 @@
 #include "origami/comm/algorithms/ring.hpp"
 
 #include <algorithm>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -41,12 +40,13 @@ namespace origami::comm {
 // Spread num_wgs over the ring links, conserving the total: each of the
 // nrings=min(num_wgs, N-1) links gets floor(num_wgs/nrings), and the first
 // `extra` links take one more so the counts sum back to num_wgs.
-std::unordered_map<int, int> ring_distribute(int num_wgs, int num_gpus) {
+std::vector<int> ring_distribute(int num_wgs, int num_gpus) {
   const int nrings = std::max(std::min(num_wgs, num_gpus - 1), 1);
   const int base   = num_wgs / nrings;
   const int extra  = num_wgs - base * nrings;
-  std::unordered_map<int, int> out;
-  for (int i = 0; i < nrings; ++i) { out[i] = base + (i < extra ? 1 : 0); }
+  std::vector<int> out;
+  out.reserve(nrings);
+  for (int i = 0; i < nrings; ++i) out.push_back(base + (i < extra ? 1 : 0));
   return out;
 }
 
@@ -68,21 +68,20 @@ int ring_wgs_per_link(int num_wgs, int num_gpus) noexcept {
 ring_fixed_algorithm_t::ring_fixed_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
-// Every hop pushes to the fixed next-rank neighbour.
-schedule_entry_t ring_fixed_algorithm_t::link_of(int /*pid*/, int /*timestep*/, int my_rank) const {
+// Every hop pushes to the fixed next-rank neighbour (independent of pid and timestep).
+schedule_entry_t ring_fixed_algorithm_t::link_of(int pid, int timestep, int my_rank) const {
   const int next_rank = floor_mod(my_rank + 1, num_gpus_);
   auto work           = wg_fn_(next_rank, my_rank, num_gpus_, false);
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
-// Floored ring share (see ring_wgs_per_link).
-int ring_fixed_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
+// Floored ring share (see ring_wgs_per_link); independent of timestep.
+int ring_fixed_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
   return ring_wgs_per_link(num_wgs, num_gpus_);
 }
 
-// Workgroups distributed across the ring links (see ring_distribute).
-std::unordered_map<int, int> ring_fixed_algorithm_t::active_links(int /*timestep*/,
-                                                                  int num_wgs) const {
+// Workgroups distributed across the ring links (see ring_distribute); independent of timestep.
+std::vector<int> ring_fixed_algorithm_t::active_links(int timestep, int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
@@ -95,11 +94,12 @@ bool ring_fixed_algorithm_t::is_ring_class() const { return true; }
 // Pipelined ring: priced by the closed-form throughput model.
 bool ring_fixed_algorithm_t::is_ring_pipeline() const { return true; }
 
-// Reduce-ring hop: wait on prev, pull from prev, reduce, store, signal next.
-std::vector<op_t> ring_fixed_algorithm_t::default_work_graph(int /*peer*/,
+// Reduce-ring hop: wait on prev, pull from prev, reduce, store, signal next. (Depends on
+// my_rank/num_gpus; peer and is_self are unused.)
+std::vector<op_t> ring_fixed_algorithm_t::default_work_graph(int peer,
                                                              int my_rank,
                                                              int num_gpus,
-                                                             bool /*is_self*/) {
+                                                             bool is_self) {
   const int next_rank = floor_mod(my_rank + 1, num_gpus);
   const int prev_rank = floor_mod(my_rank - 1, num_gpus);
   return {
@@ -121,10 +121,9 @@ std::vector<op_t> ring_fixed_algorithm_t::default_work_graph(int /*peer*/,
 // Store the communicator size.
 ring_all_gather_algorithm_t::ring_all_gather_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
-// Each step loads locally, stores, and pushes the slice to the next rank.
-schedule_entry_t ring_all_gather_algorithm_t::link_of(int /*pid*/,
-                                                      int /*timestep*/,
-                                                      int my_rank) const {
+// Each step loads locally, stores, and pushes the slice to the next rank (independent of
+// pid and timestep).
+schedule_entry_t ring_all_gather_algorithm_t::link_of(int pid, int timestep, int my_rank) const {
   const int next_rank    = floor_mod(my_rank + 1, num_gpus_);
   std::vector<op_t> work = {
       load_t{},
@@ -134,14 +133,13 @@ schedule_entry_t ring_all_gather_algorithm_t::link_of(int /*pid*/,
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
-// Floored ring share (see ring_wgs_per_link).
-int ring_all_gather_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
+// Floored ring share (see ring_wgs_per_link); independent of timestep.
+int ring_all_gather_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
   return ring_wgs_per_link(num_wgs, num_gpus_);
 }
 
-// Workgroups distributed across the ring links (see ring_distribute).
-std::unordered_map<int, int> ring_all_gather_algorithm_t::active_links(int /*timestep*/,
-                                                                       int num_wgs) const {
+// Workgroups distributed across the ring links (see ring_distribute); independent of timestep.
+std::vector<int> ring_all_gather_algorithm_t::active_links(int timestep, int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
@@ -162,9 +160,10 @@ bool ring_all_gather_algorithm_t::is_ring_class() const { return true; }
 ring_reduce_scatter_algorithm_t::ring_reduce_scatter_algorithm_t(int num_gpus)
     : num_gpus_{num_gpus} {}
 
-// Each step loads, reduces, stores, and pushes the slice to the next rank.
-schedule_entry_t ring_reduce_scatter_algorithm_t::link_of(int /*pid*/,
-                                                          int /*timestep*/,
+// Each step loads, reduces, stores, and pushes the slice to the next rank (independent of
+// pid and timestep).
+schedule_entry_t ring_reduce_scatter_algorithm_t::link_of(int pid,
+                                                          int timestep,
                                                           int my_rank) const {
   const int next_rank    = floor_mod(my_rank + 1, num_gpus_);
   std::vector<op_t> work = {
@@ -176,14 +175,13 @@ schedule_entry_t ring_reduce_scatter_algorithm_t::link_of(int /*pid*/,
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
-// Floored ring share (see ring_wgs_per_link).
-int ring_reduce_scatter_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
+// Floored ring share (see ring_wgs_per_link); independent of timestep.
+int ring_reduce_scatter_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
   return ring_wgs_per_link(num_wgs, num_gpus_);
 }
 
-// Workgroups distributed across the ring links (see ring_distribute).
-std::unordered_map<int, int> ring_reduce_scatter_algorithm_t::active_links(int /*timestep*/,
-                                                                           int num_wgs) const {
+// Workgroups distributed across the ring links (see ring_distribute); independent of timestep.
+std::vector<int> ring_reduce_scatter_algorithm_t::active_links(int timestep, int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
@@ -206,9 +204,8 @@ ring_all_reduce_algorithm_t::ring_all_reduce_algorithm_t(int num_gpus) : num_gpu
 
 // Reduce-scatter phase (pull+reduce) for the first N-1 steps, then all-gather (pull only);
 // both phases cross the fixed prev->next neighbour link with a signal/wait dependency.
-schedule_entry_t ring_all_reduce_algorithm_t::link_of(int /*pid*/,
-                                                      int timestep,
-                                                      int my_rank) const {
+// (pid does not steer this schedule.)
+schedule_entry_t ring_all_reduce_algorithm_t::link_of(int pid, int timestep, int my_rank) const {
   const int next_rank = floor_mod(my_rank + 1, num_gpus_);
   const int prev_rank = floor_mod(my_rank - 1, num_gpus_);
   const int rs_visits = num_gpus_ - 1;
@@ -234,14 +231,13 @@ schedule_entry_t ring_all_reduce_algorithm_t::link_of(int /*pid*/,
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
-// Floored ring share (see ring_wgs_per_link).
-int ring_all_reduce_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
+// Floored ring share (see ring_wgs_per_link); independent of timestep.
+int ring_all_reduce_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
   return ring_wgs_per_link(num_wgs, num_gpus_);
 }
 
-// Workgroups distributed across the ring links (see ring_distribute).
-std::unordered_map<int, int> ring_all_reduce_algorithm_t::active_links(int /*timestep*/,
-                                                                       int num_wgs) const {
+// Workgroups distributed across the ring links (see ring_distribute); independent of timestep.
+std::vector<int> ring_all_reduce_algorithm_t::active_links(int timestep, int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
@@ -263,10 +259,9 @@ bool ring_all_reduce_algorithm_t::is_ring_pipeline() const { return true; }
 // Store the communicator size.
 ring_broadcast_algorithm_t::ring_broadcast_algorithm_t(int num_gpus) : num_gpus_{num_gpus} {}
 
-// Each step loads locally, stores, and pushes the data to the next rank.
-schedule_entry_t ring_broadcast_algorithm_t::link_of(int /*pid*/,
-                                                     int /*timestep*/,
-                                                     int my_rank) const {
+// Each step loads locally, stores, and pushes the data to the next rank (independent of
+// pid and timestep).
+schedule_entry_t ring_broadcast_algorithm_t::link_of(int pid, int timestep, int my_rank) const {
   const int next_rank    = floor_mod(my_rank + 1, num_gpus_);
   std::vector<op_t> work = {
       load_t{},
@@ -276,14 +271,13 @@ schedule_entry_t ring_broadcast_algorithm_t::link_of(int /*pid*/,
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
-// Floored ring share (see ring_wgs_per_link).
-int ring_broadcast_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
+// Floored ring share (see ring_wgs_per_link); independent of timestep.
+int ring_broadcast_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
   return ring_wgs_per_link(num_wgs, num_gpus_);
 }
 
-// Workgroups distributed across the ring links (see ring_distribute).
-std::unordered_map<int, int> ring_broadcast_algorithm_t::active_links(int /*timestep*/,
-                                                                      int num_wgs) const {
+// Workgroups distributed across the ring links (see ring_distribute); independent of timestep.
+std::vector<int> ring_broadcast_algorithm_t::active_links(int timestep, int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 

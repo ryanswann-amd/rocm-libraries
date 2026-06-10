@@ -27,7 +27,6 @@
 #include "origami/comm/algorithms/direct.hpp"
 
 #include <algorithm>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -45,30 +44,30 @@ all_to_same_algorithm_t::all_to_same_algorithm_t(int num_gpus, work_graph_fn_t w
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
 // Target the next remote peer (my_rank + timestep + 1) and pull from it; load locally on a
-// self-step.
-schedule_entry_t all_to_same_algorithm_t::link_of(int /*pid*/, int timestep, int my_rank) const {
+// self-step. (pid does not steer this schedule.)
+schedule_entry_t all_to_same_algorithm_t::link_of(int pid, int timestep, int my_rank) const {
   const int peer     = floor_mod(my_rank + timestep + 1, num_gpus_);
   const bool is_self = (peer == my_rank);
   auto work          = wg_fn_(peer, my_rank, num_gpus_, is_self);
   return {is_self ? SELF_LINK : peer, peer, direction_t::PULL, std::move(work), is_self};
 }
 
-// One shared link per step, so every workgroup rides it.
-int all_to_same_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const { return num_wgs; }
+// One shared link per step, so every workgroup rides it (independent of timestep).
+int all_to_same_algorithm_t::wgs_on_link(int timestep, int num_wgs) const { return num_wgs; }
 
-// Exactly one link is active this step, carrying all the workgroups.
-std::unordered_map<int, int> all_to_same_algorithm_t::active_links(int timestep,
-                                                                   int num_wgs) const {
-  return {{timestep % (num_gpus_ - 1), num_wgs}};
+// Exactly one link is active this step, carrying all the workgroups (independent of timestep).
+std::vector<int> all_to_same_algorithm_t::active_links(int timestep, int num_wgs) const {
+  return {num_wgs};
 }
 
 // One round per remote peer.
 int all_to_same_algorithm_t::num_timesteps() const { return num_gpus_ - 1; }
 
-// Default hop: pull then store; load+store when the data is already local.
+// Default hop: pull then store; load+store when the data is already local. (Depends only on
+// peer/is_self; my_rank and num_gpus are unused.)
 std::vector<op_t> all_to_same_algorithm_t::default_work_graph(int peer,
-                                                              int /*my_rank*/,
-                                                              int /*num_gpus*/,
+                                                              int my_rank,
+                                                              int num_gpus,
                                                               bool is_self) {
   if (is_self) return {load_t{}, store_t{}};
   return {pull_t{peer}, store_t{}};
@@ -96,22 +95,20 @@ schedule_entry_t pid_staggered_algorithm_t::link_of(int pid, int timestep, int m
   return {is_self ? SELF_LINK : peer, peer, direction_t::PULL, std::move(work), is_self};
 }
 
-// Spread the remote workgroups evenly over the N-1 links.
-int pid_staggered_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
+// Spread the remote workgroups evenly over the N-1 links (independent of timestep).
+int pid_staggered_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
   const int num_links  = num_gpus_ - 1;
   const int remote_wgs = num_wgs * (num_gpus_ - 1) / num_gpus_;
   return std::max(remote_wgs / std::max(num_links, 1), 1);
 }
 
-// All N-1 links active each step, remote workgroups split evenly across them.
-std::unordered_map<int, int> pid_staggered_algorithm_t::active_links(int /*timestep*/,
-                                                                     int num_wgs) const {
+// All N-1 links active each step, remote workgroups split evenly across them (independent
+// of timestep).
+std::vector<int> pid_staggered_algorithm_t::active_links(int timestep, int num_wgs) const {
   const int num_links  = num_gpus_ - 1;
   const int remote_wgs = num_wgs * (num_gpus_ - 1) / num_gpus_;
   const int per_link   = std::max(remote_wgs / std::max(num_links, 1), 1);
-  std::unordered_map<int, int> out;
-  for (int i = 0; i < num_links; ++i) out[i] = per_link;
-  return out;
+  return std::vector<int>(std::max(num_links, 0), per_link);
 }
 
 // N rounds, counting the self-step.
@@ -119,10 +116,10 @@ int pid_staggered_algorithm_t::num_timesteps() const { return num_gpus_; }
 // Each step moves 1/N of the buffer.
 int pid_staggered_algorithm_t::chunks_per_timestep() const { return num_gpus_; }
 
-// Default hop: pull then reduce; load+reduce when local.
+// Default hop: pull then reduce; load+reduce when local. (Depends only on peer/is_self.)
 std::vector<op_t> pid_staggered_algorithm_t::default_work_graph(int peer,
-                                                                int /*my_rank*/,
-                                                                int /*num_gpus*/,
+                                                                int my_rank,
+                                                                int num_gpus,
                                                                 bool is_self) {
   if (is_self) return {load_t{}, reduce_t{}};
   return {pull_t{peer}, reduce_t{}};
@@ -139,10 +136,9 @@ std::vector<op_t> pid_staggered_algorithm_t::default_work_graph(int peer,
 pid_partitioned_algorithm_t::pid_partitioned_algorithm_t(int num_gpus, work_graph_fn_t wg_fn)
     : num_gpus_{num_gpus}, wg_fn_{wg_fn ? std::move(wg_fn) : default_work_graph} {}
 
-// Permanently bind the workgroup to the destination chosen by its pid and push there.
-schedule_entry_t pid_partitioned_algorithm_t::link_of(int pid,
-                                                      int /*timestep*/,
-                                                      int my_rank) const {
+// Permanently bind the workgroup to the destination chosen by its pid and push there. The
+// schedule is a single step, so timestep does not steer it.
+schedule_entry_t pid_partitioned_algorithm_t::link_of(int pid, int timestep, int my_rank) const {
   const int dest     = floor_mod(pid, num_gpus_);
   const int peer     = floor_mod(my_rank + dest, num_gpus_);
   const bool is_self = (peer == my_rank);
@@ -150,27 +146,25 @@ schedule_entry_t pid_partitioned_algorithm_t::link_of(int pid,
   return {is_self ? SELF_LINK : peer, peer, direction_t::PUSH, std::move(work), is_self};
 }
 
-// Partition the workgroups evenly, one share per destination.
-int pid_partitioned_algorithm_t::wgs_on_link(int /*timestep*/, int num_wgs) const {
+// Partition the workgroups evenly, one share per destination (independent of timestep).
+int pid_partitioned_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
   return std::max(num_wgs / num_gpus_, 1);
 }
 
-// All N-1 remote links active, workgroups partitioned evenly across them.
-std::unordered_map<int, int> pid_partitioned_algorithm_t::active_links(int /*timestep*/,
-                                                                       int num_wgs) const {
+// All N-1 remote links active, workgroups partitioned evenly across them (independent of
+// timestep).
+std::vector<int> pid_partitioned_algorithm_t::active_links(int timestep, int num_wgs) const {
   const int per_link = std::max(num_wgs / num_gpus_, 1);
-  std::unordered_map<int, int> out;
-  for (int i = 0; i < num_gpus_ - 1; ++i) out[i] = per_link;
-  return out;
+  return std::vector<int>(std::max(num_gpus_ - 1, 0), per_link);
 }
 
 // A single timestep: every destination is served at once.
 int pid_partitioned_algorithm_t::num_timesteps() const { return 1; }
 
-// Default hop: load then push; load+store when local.
+// Default hop: load then push; load+store when local. (Depends only on peer/is_self.)
 std::vector<op_t> pid_partitioned_algorithm_t::default_work_graph(int peer,
-                                                                  int /*my_rank*/,
-                                                                  int /*num_gpus*/,
+                                                                  int my_rank,
+                                                                  int num_gpus,
                                                                   bool is_self) {
   if (is_self) return {load_t{}, store_t{}};
   return {load_t{}, push_t{peer}};
@@ -222,15 +216,12 @@ int two_shot_all_reduce_algorithm_t::wgs_on_link(int timestep, int num_wgs) cons
 }
 
 // All N-1 links active each step, workgroups spread evenly across them.
-std::unordered_map<int, int> two_shot_all_reduce_algorithm_t::active_links(int timestep,
-                                                                           int num_wgs) const {
+std::vector<int> two_shot_all_reduce_algorithm_t::active_links(int timestep, int num_wgs) const {
   const int num_links = num_gpus_ - 1;
   const int remote_wgs =
       is_reduce_phase_(timestep) ? num_wgs * (num_gpus_ - 1) / num_gpus_ : num_wgs;
   const int per_link = std::max(remote_wgs / std::max(num_links, 1), 1);
-  std::unordered_map<int, int> out;
-  for (int i = 0; i < num_links; ++i) out[i] = per_link;
-  return out;
+  return std::vector<int>(std::max(num_links, 0), per_link);
 }
 
 // 2N-1 rounds: N reduce steps (incl. self) then N-1 broadcast steps.

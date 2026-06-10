@@ -157,13 +157,13 @@ double compute_sequential_latency(const collective_algorithm_t& algorithm,
       T_timesteps += breakdown.T_total_cycles;
     } else {
       // A remote step may light up several links at once; active_links reports
-      // how the eff_wgs workgroups are distributed over them. Each link's WGs
-      // share that link's width evenly, and the timestep waits for the most
-      // congested link to finish — hence the max over links.
+      // how the eff_wgs workgroups are distributed over them (one count per active
+      // link). Each link's WGs share that link's width evenly, and the timestep
+      // waits for the most congested link to finish — hence the max over links.
       const auto link_wg_counts = algorithm.active_links(timestep, eff_wgs);
 
       double T_link_max = 0.0;
-      for (const auto& [link_id, wgs_on_link] : link_wg_counts) {
+      for (const int wgs_on_link : link_wg_counts) {
         const double bw_per_wg = comm_hw.link_bw / static_cast<double>(std::max(wgs_on_link, 1));
 
         const auto breakdown = compute_wg_tile_latency(entry.work_graph,

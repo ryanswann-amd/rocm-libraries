@@ -58,8 +58,8 @@
 //     staggered sweep through peers, for instance, emerges from successive
 //     timesteps, not from any loop inside link_of.
 //   • The small bounded loops you do see inside active_links / ring_distribute
-//     fill a map over the ≤ N-1 links of a SINGLE step — they build one step's
-//     data, they do not iterate the schedule.
+//     fill a vector over the <= N-1 links of a SINGLE step — they build one
+//     step's data, they do not iterate the schedule.
 // Because the per-call work is closed-form and stateless, the algorithms fold
 // cheaply and virtual dispatch happens only once per collective.
 //
@@ -79,7 +79,6 @@
 #include "origami/comm/types.hpp"
 
 #include <functional>
-#include <unordered_map>
 #include <vector>
 
 namespace origami::comm {
@@ -144,6 +143,15 @@ constexpr int floor_mod(int a, int n) noexcept {
  * (num_gpus_ on each concrete algorithm), so the schedule queries below take
  * only the per-call coordinates (pid, timestep, my_rank, num_wgs) and read the
  * communicator size from the object.
+ *
+ * The schedule queries take a uniform (pid, timestep, ...) signature so the cost
+ * engine can drive every algorithm the same way. Many algorithms do not read
+ * every coordinate: phase-changing ones (two-shot, ring all-reduce) steer on
+ * timestep, while round-invariant ones (the rings, all-to-same) emit the same
+ * schedule every round and ignore it. Such parameters are kept named — rather
+ * than dropped or marked unused — so the interface stays consistent and the
+ * intent is documented per override; leaving a named-but-unused parameter is
+ * warning-free here (no -Wextra/-Wunused-parameter in the build).
  */
 class collective_algorithm_t {
  public:
@@ -175,13 +183,18 @@ class collective_algorithm_t {
   virtual int wgs_on_link(int timestep, int num_wgs) const = 0;
 
   /**
-   * @brief Map of the links lit up this timestep to the workgroups on each.
+   * @brief Per-link workgroup counts for the links lit up this timestep.
+   *
+   * One entry per active link, holding the workgroups assigned to it; a link's
+   * position in the vector is its id (ids are dense 0-based indices and no
+   * consumer needs them beyond iterating the counts). The values sum to num_wgs
+   * (conservation).
    *
    * @param timestep Communication round index (0-based).
    * @param num_wgs Total workgroups participating in the collective.
-   * @return Map from link id to the number of workgroups assigned to that link.
+   * @return Workgroup count per active link.
    */
-  virtual std::unordered_map<int, int> active_links(int timestep, int num_wgs) const = 0;
+  virtual std::vector<int> active_links(int timestep, int num_wgs) const = 0;
 
   /**
    * @brief Number of dependent communication rounds the algorithm takes.
