@@ -28,20 +28,23 @@
 
 namespace origami::comm {
 
-double wire_factor(std::string_view op, int world_size) {
+double wire_factor(primitive_t op, int world_size) {
   const double n = static_cast<double>(world_size);
-  if (op == "all_reduce") return 2.0 * (n - 1.0) / n;
-  if (op == "all_gather") return (n - 1.0);
-  if (op == "reduce_scatter") return (n - 1.0);
-  if (op == "broadcast") return 1.0;
-  if (op == "all_to_all") return (n - 1.0) / n;
-  throw std::invalid_argument(std::string{"unknown op: "} + std::string{op});
+  switch (op) {
+    case primitive_t::all_reduce: return 2.0 * (n - 1.0) / n;
+    case primitive_t::all_gather: return (n - 1.0);
+    case primitive_t::reduce_scatter: return (n - 1.0);
+    case primitive_t::broadcast: return 1.0;
+    case primitive_t::all_to_all: return (n - 1.0) / n;
+  }
+  throw std::invalid_argument(std::string{"unknown collective: "} +
+                              std::string{primitive_name(op)});
 }
 
-std::size_t msg_bytes_for_predict_row(std::string_view op,
-                                      std::size_t per_rank_bytes,
-                                      int world_size) {
-  if (op == "reduce_scatter") { return per_rank_bytes * static_cast<std::size_t>(world_size); }
+std::size_t msg_bytes_for_predict_row(primitive_t op, std::size_t per_rank_bytes, int world_size) {
+  if (op == primitive_t::reduce_scatter) {
+    return per_rank_bytes * static_cast<std::size_t>(world_size);
+  }
   return per_rank_bytes;
 }
 
@@ -97,12 +100,6 @@ full_mn_t per_rank_shape_to_full_mn(const std::vector<std::size_t>& shape,
   return {m_per_rank * static_cast<std::size_t>(world_size), n_per_rank, 0};
 }
 
-bool is_supported_op(std::string_view op) {
-  for (const auto& s : SUPPORTED_OPS)
-    if (s == op) return true;
-  return false;
-}
-
 tensor_collective_prediction_t predict_tensor_collective(
     std::string_view op,
     const std::vector<std::size_t>& input_shape,
@@ -113,9 +110,7 @@ tensor_collective_prediction_t predict_tensor_collective(
     const system_t& system,
     std::string_view framework,
     const heuristics_t& heur) {
-  if (!is_supported_op(op)) {
-    throw std::invalid_argument(std::string{"unsupported op: "} + std::string{op});
-  }
+  const primitive_t prim = primitive_from_name(op);  // string -> enum at the edge
   if (world_size < 1) { throw std::invalid_argument("world_size must be >= 1"); }
 
   const int eb = dtype_bytes(dtype);
@@ -159,10 +154,10 @@ tensor_collective_prediction_t predict_tensor_collective(
   const std::size_t per_rank_bytes = per_rank_elements * static_cast<std::size_t>(eb);
 
   const std::size_t wire_bytes_per_rank =
-      static_cast<std::size_t>(wire_factor(op, world_size) * static_cast<double>(per_rank_bytes));
+      static_cast<std::size_t>(wire_factor(prim, world_size) * static_cast<double>(per_rank_bytes));
 
   const auto full             = per_rank_shape_to_full_mn(input_shape, dim, world_size);
-  const std::size_t msg_bytes = msg_bytes_for_predict_row(op, per_rank_bytes, world_size);
+  const std::size_t msg_bytes = msg_bytes_for_predict_row(prim, per_rank_bytes, world_size);
 
   const double backend_us = predict_row(
       op, msg_bytes, world_size, nchannels, system, full.M_full, full.N_full, full.split_dim, heur);

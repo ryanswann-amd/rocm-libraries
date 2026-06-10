@@ -65,13 +65,11 @@ namespace origami::comm {
  * Exposed for reporting (wire_bytes_per_rank); the cost model derives traffic
  * from the algorithm, so this is a cross-check, not the source of the prediction.
  *
- * @param op Collective name (all_reduce, all_gather, reduce_scatter, broadcast,
- *        all_to_all).
+ * @param op Collective primitive.
  * @param world_size Number of participating ranks.
  * @return double Wire-byte multiplier per byte of user buffer.
- * @throws std::invalid_argument If op is not a known collective.
  */
-double wire_factor(std::string_view op, int world_size);
+double wire_factor(primitive_t op, int world_size);
 
 /**
  * @brief Convert a per-rank byte count into predict_row's msg_bytes convention.
@@ -81,14 +79,12 @@ double wire_factor(std::string_view op, int world_size);
  * msg_bytes is the *aggregate* pre-scatter buffer = per_rank × N. This reverses
  * the per-rank division predict_row applies, so the two agree.
  *
- * @param op Collective name.
+ * @param op Collective primitive.
  * @param per_rank_bytes Per-rank buffer size in bytes.
  * @param world_size Number of participating ranks.
  * @return std::size_t msg_bytes in predict_row's convention.
  */
-std::size_t msg_bytes_for_predict_row(std::string_view op,
-                                      std::size_t per_rank_bytes,
-                                      int world_size);
+std::size_t msg_bytes_for_predict_row(primitive_t op, std::size_t per_rank_bytes, int world_size);
 
 // ─── dtype normalization ─────────────────────────────────────────
 /**
@@ -189,22 +185,6 @@ struct tensor_collective_prediction_t {
    */
   constexpr double backend_us() const noexcept { return predicted_us - framework_overhead_us; }
 };
-
-// ─── Supported op set ───────────────────────────────────────────
-/// Collective op names accepted by predict_tensor_collective.
-inline constexpr std::string_view SUPPORTED_OPS[] = {"all_reduce",
-                                                     "all_gather",
-                                                     "reduce_scatter",
-                                                     "broadcast",
-                                                     "all_to_all"};
-
-/**
- * @brief Check whether an op name is a supported collective.
- *
- * @param op Collective name to test.
- * @return bool True if op is in SUPPORTED_OPS, false otherwise.
- */
-bool is_supported_op(std::string_view op);
 
 /**
  * @brief Shape-aware tensor collective prediction (typed-dtype overload).
