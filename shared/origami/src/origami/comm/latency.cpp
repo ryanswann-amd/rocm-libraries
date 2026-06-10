@@ -28,6 +28,14 @@
 
 namespace origami::comm {
 
+namespace {
+/// ceil_div clamped to a floor of 1: every stage of the iteration walk must run
+/// at least once, even when the dividend rounds down to zero.
+std::size_t ceil_div_min1(std::size_t numerator, std::size_t denominator) {
+  return std::max<std::size_t>(ceil_div(numerator, denominator), 1);
+}
+}  // namespace
+
 iter_times_t compute_iter_times(const functional_unit_work_t& work,
                                 const system_t& system,
                                 double bw_per_wg,
@@ -117,28 +125,26 @@ iter_times_t compute_iter_times(const functional_unit_work_t& work,
   return t;
 }
 
-std::pair<std::size_t, std::size_t> iter_counts_from_tile(
-    const std::optional<tile_shape_t>& wg_tile,
-    std::size_t wg_tile_cachelines,
-    std::size_t wg_tile_elements,
-    std::size_t cl_per_iter,
-    std::size_t cacheline_bytes) {
+std::pair<std::size_t, std::size_t> iter_counts_from_tile(const wg_tile_geometry_t& geometry,
+                                                          std::size_t cl_per_iter,
+                                                          std::size_t cacheline_bytes) {
+  const std::optional<tile_shape_t>& shape = geometry.shape;
+
   // Strided tile: each of the m rows is walked on its own (a row's partial final
   // line can't merge with the next row), so iters = m * ceil(cl_per_row / cl_per_iter)
   // and each iteration reduces one row's-worth of columns spread over its iters_per_row.
-  if (wg_tile.has_value() && !wg_tile->contiguous) {
+  if (shape.has_value() && !shape->contiguous) {
     const std::size_t iters_per_row =
-        std::max<std::size_t>(ceil_div(wg_tile->cl_per_row(cacheline_bytes), cl_per_iter), 1);
-    const std::size_t num_iters = std::max<std::size_t>(wg_tile->m * iters_per_row, 1);
-    const std::size_t elements_per_iter =
-        std::max<std::size_t>(ceil_div(wg_tile->n, iters_per_row), 1);
+        ceil_div_min1(shape->cl_per_row(cacheline_bytes), cl_per_iter);
+    const std::size_t num_iters         = std::max<std::size_t>(shape->m * iters_per_row, 1);
+    const std::size_t elements_per_iter = ceil_div_min1(shape->n, iters_per_row);
     return {num_iters, elements_per_iter};
   }
+
   // Contiguous (or unknown) tile: one flat byte run chopped into cl_per_iter-line
   // iterations, with the elements split evenly across those iterations.
-  const std::size_t num_iters = std::max<std::size_t>(ceil_div(wg_tile_cachelines, cl_per_iter), 1);
-  const std::size_t elements_per_iter =
-      std::max<std::size_t>(ceil_div(wg_tile_elements, num_iters), 1);
+  const std::size_t num_iters         = ceil_div_min1(geometry.cachelines, cl_per_iter);
+  const std::size_t elements_per_iter = ceil_div_min1(geometry.elements, num_iters);
   return {num_iters, elements_per_iter};
 }
 
@@ -153,8 +159,8 @@ wg_tile_latency_breakdown_t compute_wg_tile_latency(const std::vector<op_t>& wor
       static_cast<std::size_t>(ctx.config.cl_per_iter(hw.cacheline_bytes));
   const int instrs_per_cl = ctx.config.instrs_per_cl(hw.cacheline_bytes);
 
-  auto [num_iters, elements_per_iter] = iter_counts_from_tile(
-      geometry.shape, geometry.cachelines, geometry.elements, cl_per_iter, hw.cacheline_bytes);
+  auto [num_iters, elements_per_iter] =
+      iter_counts_from_tile(geometry, cl_per_iter, hw.cacheline_bytes);
 
   const auto resolved = resolve_work_graph(
       work_graph,

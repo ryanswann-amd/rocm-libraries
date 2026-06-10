@@ -157,35 +157,6 @@ iter_times_t compute_iter_times(const functional_unit_work_t& work,
                                 std::optional<primitive_t> primitive = std::nullopt);
 
 /**
- * @brief Pipelined iteration count for a WG tile and elements per iteration.
- *
- * How many pipelined iterations a WG tile takes, and how many elements each
- * iteration reduces (the latter only matters for the VALU term). The walk has
- * to respect the tile's memory layout:
- *   contiguous : the tile is one flat byte run, so it is simply chopped into
- *                cl_per_iter-line iterations — ceil(cachelines / cl_per_iter).
- *   strided    : each of the m rows must be walked separately (a row's partial
- *                final line cannot be merged with the next row), so the count
- *                is m × iters_per_row. This is the iteration-level consequence
- *                of the same contiguity penalty tile_shape_t.cachelines models.
- *
- * @param wg_tile Optional tile shape; when present and strided it drives the
- *        per-row walk, otherwise the flat contiguous run is used.
- * @param wg_tile_cachelines Total cache lines in the WG tile.
- * @param wg_tile_elements Total elements in the WG tile.
- * @param cl_per_iter Cache lines transferred per pipelined iteration.
- * @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
- * @return std::pair<std::size_t, std::size_t> {num_iters, elements_per_iter};
- *         both are >= 1.
- */
-std::pair<std::size_t, std::size_t> iter_counts_from_tile(
-    const std::optional<tile_shape_t>& wg_tile,
-    std::size_t wg_tile_cachelines,
-    std::size_t wg_tile_elements,
-    std::size_t cl_per_iter,
-    std::size_t cacheline_bytes);
-
-/**
  * @brief Geometry of one workgroup tile for the pipelined-iteration count.
  *
  * Describes the tile compute_wg_tile_latency streams. cachelines and elements
@@ -207,6 +178,30 @@ struct wg_tile_geometry_t {
             tile};
   }
 };
+
+/**
+ * @brief Pipelined iteration count for a WG tile and elements per iteration.
+ *
+ * How many pipelined iterations a WG tile takes, and how many elements each
+ * iteration reduces (the latter only matters for the VALU term). The walk has
+ * to respect the tile's memory layout:
+ *   contiguous : the tile is one flat byte run, so it is simply chopped into
+ *                cl_per_iter-line iterations — ceil(cachelines / cl_per_iter).
+ *   strided    : each of the m rows must be walked separately (a row's partial
+ *                final line cannot be merged with the next row), so the count
+ *                is m × iters_per_row. This is the iteration-level consequence
+ *                of the same contiguity penalty tile_shape_t.cachelines models.
+ *
+ * @param geometry WG tile geometry (totals plus the optional shape that, when
+ *        present and strided, drives the per-row walk).
+ * @param cl_per_iter Cache lines transferred per pipelined iteration.
+ * @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
+ * @return std::pair<std::size_t, std::size_t> {num_iters, elements_per_iter};
+ *         both are >= 1.
+ */
+std::pair<std::size_t, std::size_t> iter_counts_from_tile(const wg_tile_geometry_t& geometry,
+                                                          std::size_t cl_per_iter,
+                                                          std::size_t cacheline_bytes);
 
 /**
  * @brief Loop-invariant context shared across every wg_tile latency query.
