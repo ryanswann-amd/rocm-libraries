@@ -1,4 +1,4 @@
-layout,num_gpus,pid,timestep,my_rank,link_id,peer_rank,direction,is_self,wg_sig
+algorithm,num_gpus,pid,timestep,my_rank,link_id,peer_rank,direction,is_self,wg_sig
 RingAllGather,2,0,0,0,1,1,push,0,L|S|X1
 RingAllGather,2,1,0,0,1,1,push,0,L|S|X1
 RingAllGather,2,2,0,0,1,1,push,0,L|S|X1

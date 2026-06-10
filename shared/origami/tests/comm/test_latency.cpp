@@ -32,8 +32,8 @@
 //                                             num_wgs x 6 primitives x 3
 //                                             bw_per_wg regimes.
 //   golden/wg_tile_latency.csv  (960 rows) -- compute_wg_tile_latency
-//                                             outputs across 8 layout work
-//                                             graphs x 6 sizes x 4 num_wgs
+//                                             outputs across 8 work graphs
+//                                             x 6 sizes x 4 num_wgs
 //                                             x 5 primitives.
 //
 // Tolerance: 1e-12 (absolute), the typical FP-reorder noise floor for
@@ -239,16 +239,12 @@ TEST(wg_tile_latency_match_golden_grid) {
     cfg.vgprs_for_data   = 128;
     cfg.min_bytes_per_wg = 16384;
 
-    const auto out = compute_wg_tile_latency(ops,
-                                             wg_cl,
-                                             cfg,
-                                             MI300X_SYSTEM,
-                                             bw,
-                                             wg_el,
-                                             /*active_cus=*/active,
-                                             /*wg_tile=*/std::nullopt,
-                                             DEFAULT_HEURISTICS,
-                                             prim_enum);
+    const auto out = compute_wg_tile_latency(
+        ops,
+        wg_tile_geometry_t{wg_cl, wg_el, std::nullopt},
+        bw,
+        /*active_cus=*/active,
+        latency_context_t{cfg, MI300X_SYSTEM, DEFAULT_HEURISTICS, prim_enum});
 
     struct {
       const char* name;

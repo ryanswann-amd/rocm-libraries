@@ -26,9 +26,9 @@
 
 // Ring collective algorithms: every hop forwards the slice to the fixed
 // next-rank neighbour, so the workgroups spread across the ring links via the
-// two shared helpers below (ring_distribute / ring_wgs_per_link). Some are true
-// pipelined rings (signal_t/wait_t producer→consumer dependency) priced by
-// aggregate throughput rather than a sum of per-step latencies.
+// shared ring_distribute helper below. Some are true pipelined rings
+// (signal_t/wait_t producer→consumer dependency) priced by aggregate throughput
+// rather than a sum of per-step latencies.
 #pragma once
 
 #include "origami/comm/algorithms/base.hpp"
@@ -58,15 +58,6 @@ namespace origami::comm {
 std::vector<int> ring_distribute(int num_wgs, int num_gpus);
 
 /**
- * @brief Workgroups per ring link, the floored share used to price per-link contention.
- *
- * @param num_wgs Total workgroups to distribute.
- * @param num_gpus Communicator size (bounds the ring link count at N-1).
- * @return floor(num_wgs / nrings), clamped to at least 1.
- */
-int ring_wgs_per_link(int num_wgs, int num_gpus) noexcept;
-
-/**
  * @brief Pipelined ring whose every hop crosses the fixed next_rank neighbour link.
  *
  * All hops go to next_rank. Used by ring all-reduce (older form); the work graph
@@ -85,11 +76,8 @@ class ring_fixed_algorithm_t : public collective_algorithm_t {
   /// @brief Every hop pushes to the fixed next-rank neighbour.
   schedule_entry_t link_of(int pid, int timestep, int my_rank) const override;
 
-  /// @brief Workgroups per ring link (see ring_wgs_per_link).
-  int wgs_on_link(int timestep, int num_wgs) const override;
-
   /// @brief Workgroups distributed across the ring links (see ring_distribute).
-  std::vector<int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> wgs_per_active_link(int timestep, int num_wgs) const override;
 
   /// @brief N-1 ring hops.
   int num_timesteps() const override;
@@ -131,11 +119,8 @@ class ring_all_gather_algorithm_t : public collective_algorithm_t {
   /// @brief Each step loads locally, stores, and pushes forward to the next rank.
   schedule_entry_t link_of(int pid, int timestep, int my_rank) const override;
 
-  /// @brief Workgroups per ring link (see ring_wgs_per_link).
-  int wgs_on_link(int timestep, int num_wgs) const override;
-
   /// @brief Workgroups distributed across the ring links (see ring_distribute).
-  std::vector<int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> wgs_per_active_link(int timestep, int num_wgs) const override;
 
   /// @brief N-1 ring hops.
   int num_timesteps() const override;
@@ -167,11 +152,8 @@ class ring_reduce_scatter_algorithm_t : public collective_algorithm_t {
   /// @brief Each step loads, reduces, stores, and pushes forward to the next rank.
   schedule_entry_t link_of(int pid, int timestep, int my_rank) const override;
 
-  /// @brief Workgroups per ring link (see ring_wgs_per_link).
-  int wgs_on_link(int timestep, int num_wgs) const override;
-
   /// @brief Workgroups distributed across the ring links (see ring_distribute).
-  std::vector<int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> wgs_per_active_link(int timestep, int num_wgs) const override;
 
   /// @brief N-1 ring hops.
   int num_timesteps() const override;
@@ -207,11 +189,8 @@ class ring_all_reduce_algorithm_t : public collective_algorithm_t {
   /// @brief Reduce-scatter phase (pull+reduce) for the first N-1 steps, then all-gather (pull).
   schedule_entry_t link_of(int pid, int timestep, int my_rank) const override;
 
-  /// @brief Workgroups per ring link (see ring_wgs_per_link).
-  int wgs_on_link(int timestep, int num_wgs) const override;
-
   /// @brief Workgroups distributed across the ring links (see ring_distribute).
-  std::vector<int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> wgs_per_active_link(int timestep, int num_wgs) const override;
 
   /// @brief 2(N-1) hops: a reduce-scatter ring followed by an all-gather ring.
   int num_timesteps() const override;
@@ -244,11 +223,8 @@ class ring_broadcast_algorithm_t : public collective_algorithm_t {
   /// @brief Each step loads locally, stores, and pushes forward to the next rank.
   schedule_entry_t link_of(int pid, int timestep, int my_rank) const override;
 
-  /// @brief Workgroups per ring link (see ring_wgs_per_link).
-  int wgs_on_link(int timestep, int num_wgs) const override;
-
   /// @brief Workgroups distributed across the ring links (see ring_distribute).
-  std::vector<int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> wgs_per_active_link(int timestep, int num_wgs) const override;
 
   /// @brief N-1 ring hops.
   int num_timesteps() const override;

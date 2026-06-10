@@ -30,7 +30,7 @@
 // function of (pid, timestep); the cost model prices the resulting per-step work
 // graphs rather than hard-coding any per-collective cost. See base.hpp for the
 // full design notes and the three quantities (num_timesteps, chunks_per_timestep,
-// active_links) that drive the cost.
+// wgs_per_active_link) that drive the cost.
 //
 // The algorithms are grouped by family; include this umbrella to pull them all,
 // or a single family header for a narrower dependency:
@@ -38,8 +38,8 @@
 //                              the abstract collective_algorithm_t base.
 //   • algorithms/direct.hpp  — direct/staggered algorithms (all-to-same,
 //                              pid-staggered, pid-partitioned, two-shot AR).
-//   • algorithms/ring.hpp    — ring algorithms + the ring_distribute /
-//                              ring_wgs_per_link helpers they share.
+//   • algorithms/ring.hpp    — ring algorithms + the ring_distribute helper
+//                              they share.
 //   • algorithms/resolve.hpp — public factories and resolve_algorithm.
 #pragma once
 

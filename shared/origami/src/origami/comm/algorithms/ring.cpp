@@ -50,12 +50,6 @@ std::vector<int> ring_distribute(int num_wgs, int num_gpus) {
   return out;
 }
 
-// Floored workgroups-per-ring-link share (clamped to >= 1) used to price per-link contention.
-int ring_wgs_per_link(int num_wgs, int num_gpus) noexcept {
-  const int nrings = std::max(std::min(num_wgs, num_gpus - 1), 1);
-  return std::max(num_wgs / nrings, 1);
-}
-
 // ═════════════════════════════════════════════════════════════════════════════
 // ring_fixed_algorithm_t
 // ═════════════════════════════════════════════════════════════════════════════
@@ -75,13 +69,8 @@ schedule_entry_t ring_fixed_algorithm_t::link_of(int pid, int timestep, int my_r
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
-// Floored ring share (see ring_wgs_per_link); independent of timestep.
-int ring_fixed_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
-  return ring_wgs_per_link(num_wgs, num_gpus_);
-}
-
 // Workgroups distributed across the ring links (see ring_distribute); independent of timestep.
-std::vector<int> ring_fixed_algorithm_t::active_links(int timestep, int num_wgs) const {
+std::vector<int> ring_fixed_algorithm_t::wgs_per_active_link(int timestep, int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
@@ -133,13 +122,8 @@ schedule_entry_t ring_all_gather_algorithm_t::link_of(int pid, int timestep, int
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
-// Floored ring share (see ring_wgs_per_link); independent of timestep.
-int ring_all_gather_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
-  return ring_wgs_per_link(num_wgs, num_gpus_);
-}
-
 // Workgroups distributed across the ring links (see ring_distribute); independent of timestep.
-std::vector<int> ring_all_gather_algorithm_t::active_links(int timestep, int num_wgs) const {
+std::vector<int> ring_all_gather_algorithm_t::wgs_per_active_link(int timestep, int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
@@ -175,13 +159,9 @@ schedule_entry_t ring_reduce_scatter_algorithm_t::link_of(int pid,
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
-// Floored ring share (see ring_wgs_per_link); independent of timestep.
-int ring_reduce_scatter_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
-  return ring_wgs_per_link(num_wgs, num_gpus_);
-}
-
 // Workgroups distributed across the ring links (see ring_distribute); independent of timestep.
-std::vector<int> ring_reduce_scatter_algorithm_t::active_links(int timestep, int num_wgs) const {
+std::vector<int> ring_reduce_scatter_algorithm_t::wgs_per_active_link(int timestep,
+                                                                      int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
@@ -231,13 +211,8 @@ schedule_entry_t ring_all_reduce_algorithm_t::link_of(int pid, int timestep, int
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
-// Floored ring share (see ring_wgs_per_link); independent of timestep.
-int ring_all_reduce_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
-  return ring_wgs_per_link(num_wgs, num_gpus_);
-}
-
 // Workgroups distributed across the ring links (see ring_distribute); independent of timestep.
-std::vector<int> ring_all_reduce_algorithm_t::active_links(int timestep, int num_wgs) const {
+std::vector<int> ring_all_reduce_algorithm_t::wgs_per_active_link(int timestep, int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 
@@ -271,13 +246,8 @@ schedule_entry_t ring_broadcast_algorithm_t::link_of(int pid, int timestep, int 
   return {next_rank, next_rank, direction_t::PUSH, std::move(work), false};
 }
 
-// Floored ring share (see ring_wgs_per_link); independent of timestep.
-int ring_broadcast_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
-  return ring_wgs_per_link(num_wgs, num_gpus_);
-}
-
 // Workgroups distributed across the ring links (see ring_distribute); independent of timestep.
-std::vector<int> ring_broadcast_algorithm_t::active_links(int timestep, int num_wgs) const {
+std::vector<int> ring_broadcast_algorithm_t::wgs_per_active_link(int timestep, int num_wgs) const {
   return ring_distribute(num_wgs, num_gpus_);
 }
 

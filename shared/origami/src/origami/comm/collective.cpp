@@ -128,8 +128,8 @@ double compute_sequential_latency(const collective_algorithm_t& algorithm,
 
   const tile_shape_t wg_tile =
       gpu_timestep_tile.divide_byte_equal(static_cast<std::size_t>(eff_wgs));
-  const std::size_t wg_tile_cachelines = std::max<std::size_t>(wg_tile.cachelines(), 1);
-  const std::size_t wg_tile_elements   = std::max<std::size_t>(wg_tile.elements(), 1);
+  const wg_tile_geometry_t wg_geometry = wg_tile_geometry_t::from_shape(wg_tile);
+  const latency_context_t lat_ctx{config, system, heur, primitive};
 
   // This loop is the iterative driver of the schedule: the algorithm methods are
   // closed-form (one timestep per call), and stepping through the timeline happens
@@ -145,37 +145,28 @@ double compute_sequential_latency(const collective_algorithm_t& algorithm,
       // per-WG budget is the HBM per-CU share rather than a link share.
       const double bw_per_wg = hw.hbm_read_bw_per_cu(eff_wgs);
       const auto breakdown   = compute_wg_tile_latency(entry.work_graph,
-                                                       wg_tile_cachelines,
-                                                       config,
-                                                       system,
+                                                       wg_geometry,
                                                        bw_per_wg,
-                                                       wg_tile_elements,
                                                        /*active_cus=*/eff_wgs,
-                                                       /*wg_tile=*/wg_tile,
-                                                       heur,
-                                                       primitive);
+                                                       lat_ctx);
       T_timesteps += breakdown.T_total_cycles;
     } else {
-      // A remote step may light up several links at once; active_links reports
-      // how the eff_wgs workgroups are distributed over them (one count per active
-      // link). Each link's WGs share that link's width evenly, and the timestep
-      // waits for the most congested link to finish — hence the max over links.
-      const auto link_wg_counts = algorithm.active_links(timestep, eff_wgs);
+      // A remote step may light up several links at once; wgs_per_active_link
+      // reports how the eff_wgs workgroups are distributed over them (one count
+      // per active link). Each link's WGs share that link's width evenly, and the
+      // timestep waits for the most congested link to finish — hence the max over
+      // links.
+      const auto link_wg_counts = algorithm.wgs_per_active_link(timestep, eff_wgs);
 
       double T_link_max = 0.0;
       for (const int wgs_on_link : link_wg_counts) {
         const double bw_per_wg = comm_hw.link_bw / static_cast<double>(std::max(wgs_on_link, 1));
 
         const auto breakdown = compute_wg_tile_latency(entry.work_graph,
-                                                       wg_tile_cachelines,
-                                                       config,
-                                                       system,
+                                                       wg_geometry,
                                                        bw_per_wg,
-                                                       wg_tile_elements,
                                                        /*active_cus=*/eff_wgs,
-                                                       /*wg_tile=*/wg_tile,
-                                                       heur,
-                                                       primitive);
+                                                       lat_ctx);
         T_link_max           = std::max(T_link_max, breakdown.T_total_cycles);
       }
       T_timesteps += T_link_max;

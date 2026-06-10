@@ -213,12 +213,12 @@ TEST(algorithm_chunks_per_timestep_matches_reference) {
   CHECK(pp.chunks_per_timestep() == 1);
 }
 
-// ─── active_links conservation: sum equals num_wgs for rings ────
-TEST(ring_active_links_conserves_num_wgs) {
+// ─── wgs_per_active_link conservation: sum equals num_wgs for rings ────
+TEST(ring_wgs_per_active_link_conserves_num_wgs) {
   for (int N : {2, 4, 8}) {
     for (int nch : {1, 2, 3, 7, 8, 16, 32}) {
       auto L  = allgather_algorithm(N);
-      auto al = L->active_links(/*timestep=*/0, /*num_wgs=*/nch);
+      auto al = L->wgs_per_active_link(/*timestep=*/0, /*num_wgs=*/nch);
       int sum = 0;
       for (int v : al) sum += v;
       CHECK(sum == nch);

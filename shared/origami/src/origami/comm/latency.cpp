@@ -142,30 +142,25 @@ std::pair<std::size_t, std::size_t> iter_counts_from_tile(
 }
 
 wg_tile_latency_breakdown_t compute_wg_tile_latency(const std::vector<op_t>& work_graph,
-                                                    std::size_t wg_tile_cachelines,
-                                                    const comm_config_t& config,
-                                                    const system_t& system,
+                                                    const wg_tile_geometry_t& geometry,
                                                     double bw_per_wg,
-                                                    std::size_t wg_tile_elements,
                                                     int active_cus,
-                                                    std::optional<tile_shape_t> wg_tile,
-                                                    const heuristics_t& heur,
-                                                    std::optional<primitive_t> primitive) {
-  const hardware_t& hw           = system.gpu;
-  const comm_hardware_t& comm_hw = system.fabric;
-  const std::size_t cl_per_iter  = static_cast<std::size_t>(config.cl_per_iter());
-  const int instrs_per_cl        = config.instrs_per_cl();
+                                                    const latency_context_t& ctx) {
+  const hardware_t& hw           = ctx.system.gpu;
+  const comm_hardware_t& comm_hw = ctx.system.fabric;
+  const std::size_t cl_per_iter  = static_cast<std::size_t>(ctx.config.cl_per_iter());
+  const int instrs_per_cl        = ctx.config.instrs_per_cl();
 
   auto [num_iters, elements_per_iter] =
-      iter_counts_from_tile(wg_tile, wg_tile_cachelines, wg_tile_elements, cl_per_iter);
+      iter_counts_from_tile(geometry.shape, geometry.cachelines, geometry.elements, cl_per_iter);
 
   const auto resolved = resolve_work_graph(
       work_graph,
       iter_dims_t{
           static_cast<int>(cl_per_iter), instrs_per_cl, static_cast<int>(elements_per_iter)});
 
-  const iter_times_t times =
-      compute_iter_times(resolved.iter_work, system, bw_per_wg, active_cus, heur, primitive);
+  const iter_times_t times = compute_iter_times(
+      resolved.iter_work, ctx.system, bw_per_wg, active_cus, ctx.heur, ctx.primitive);
 
   // Steady-state cost of one pipelined iteration = the binding FU (roofline).
   const double T_wlt = times.max_cycles();

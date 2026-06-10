@@ -52,11 +52,8 @@ schedule_entry_t all_to_same_algorithm_t::link_of(int pid, int timestep, int my_
   return {is_self ? SELF_LINK : peer, peer, direction_t::PULL, std::move(work), is_self};
 }
 
-// One shared link per step, so every workgroup rides it (independent of timestep).
-int all_to_same_algorithm_t::wgs_on_link(int timestep, int num_wgs) const { return num_wgs; }
-
 // Exactly one link is active this step, carrying all the workgroups (independent of timestep).
-std::vector<int> all_to_same_algorithm_t::active_links(int timestep, int num_wgs) const {
+std::vector<int> all_to_same_algorithm_t::wgs_per_active_link(int timestep, int num_wgs) const {
   return {num_wgs};
 }
 
@@ -95,16 +92,9 @@ schedule_entry_t pid_staggered_algorithm_t::link_of(int pid, int timestep, int m
   return {is_self ? SELF_LINK : peer, peer, direction_t::PULL, std::move(work), is_self};
 }
 
-// Spread the remote workgroups evenly over the N-1 links (independent of timestep).
-int pid_staggered_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
-  const int num_links  = num_gpus_ - 1;
-  const int remote_wgs = num_wgs * (num_gpus_ - 1) / num_gpus_;
-  return std::max(remote_wgs / std::max(num_links, 1), 1);
-}
-
 // All N-1 links active each step, remote workgroups split evenly across them (independent
 // of timestep).
-std::vector<int> pid_staggered_algorithm_t::active_links(int timestep, int num_wgs) const {
+std::vector<int> pid_staggered_algorithm_t::wgs_per_active_link(int timestep, int num_wgs) const {
   const int num_links  = num_gpus_ - 1;
   const int remote_wgs = num_wgs * (num_gpus_ - 1) / num_gpus_;
   const int per_link   = std::max(remote_wgs / std::max(num_links, 1), 1);
@@ -146,14 +136,9 @@ schedule_entry_t pid_partitioned_algorithm_t::link_of(int pid, int timestep, int
   return {is_self ? SELF_LINK : peer, peer, direction_t::PUSH, std::move(work), is_self};
 }
 
-// Partition the workgroups evenly, one share per destination (independent of timestep).
-int pid_partitioned_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
-  return std::max(num_wgs / num_gpus_, 1);
-}
-
 // All N-1 remote links active, workgroups partitioned evenly across them (independent of
 // timestep).
-std::vector<int> pid_partitioned_algorithm_t::active_links(int timestep, int num_wgs) const {
+std::vector<int> pid_partitioned_algorithm_t::wgs_per_active_link(int timestep, int num_wgs) const {
   const int per_link = std::max(num_wgs / num_gpus_, 1);
   return std::vector<int>(std::max(num_gpus_ - 1, 0), per_link);
 }
@@ -207,16 +192,9 @@ schedule_entry_t two_shot_all_reduce_algorithm_t::link_of(int pid,
   return {peer, peer, direction_t::PUSH, std::move(work), false};
 }
 
-// Remote workgroups spread over the N-1 links (fewer during the reduce phase's self-step).
-int two_shot_all_reduce_algorithm_t::wgs_on_link(int timestep, int num_wgs) const {
-  const int num_links = num_gpus_ - 1;
-  const int remote_wgs =
-      is_reduce_phase_(timestep) ? num_wgs * (num_gpus_ - 1) / num_gpus_ : num_wgs;
-  return std::max(remote_wgs / std::max(num_links, 1), 1);
-}
-
 // All N-1 links active each step, workgroups spread evenly across them.
-std::vector<int> two_shot_all_reduce_algorithm_t::active_links(int timestep, int num_wgs) const {
+std::vector<int> two_shot_all_reduce_algorithm_t::wgs_per_active_link(int timestep,
+                                                                      int num_wgs) const {
   const int num_links = num_gpus_ - 1;
   const int remote_wgs =
       is_reduce_phase_(timestep) ? num_wgs * (num_gpus_ - 1) / num_gpus_ : num_wgs;

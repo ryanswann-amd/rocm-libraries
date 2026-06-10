@@ -55,11 +55,8 @@ class all_to_same_algorithm_t : public collective_algorithm_t {
   /// @brief Target the remote peer (my_rank + timestep + 1), pulling from it (load when local).
   schedule_entry_t link_of(int pid, int timestep, int my_rank) const override;
 
-  /// @brief All workgroups share the single active link, so the count is num_wgs.
-  int wgs_on_link(int timestep, int num_wgs) const override;
-
   /// @brief Exactly one link is active per timestep, carrying all num_wgs workgroups.
-  std::vector<int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> wgs_per_active_link(int timestep, int num_wgs) const override;
 
   /// @brief N-1 rounds, one per remote peer.
   int num_timesteps() const override;
@@ -97,11 +94,8 @@ class pid_staggered_algorithm_t : public collective_algorithm_t {
   /// @brief Closed-form peer for one round: stagger the start by pid, advance by timestep, pull.
   schedule_entry_t link_of(int pid, int timestep, int my_rank) const override;
 
-  /// @brief Spread the remote workgroups evenly across the N-1 links.
-  int wgs_on_link(int timestep, int num_wgs) const override;
-
   /// @brief All N-1 links are active each timestep with the remote workgroups spread evenly.
-  std::vector<int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> wgs_per_active_link(int timestep, int num_wgs) const override;
 
   /// @brief N rounds, including the self-timestep.
   int num_timesteps() const override;
@@ -141,11 +135,8 @@ class pid_partitioned_algorithm_t : public collective_algorithm_t {
   /// @brief Bind the workgroup to the destination chosen by its pid, pushing to that peer.
   schedule_entry_t link_of(int pid, int timestep, int my_rank) const override;
 
-  /// @brief Workgroups split evenly across all links (one partition per destination).
-  int wgs_on_link(int timestep, int num_wgs) const override;
-
   /// @brief All N-1 remote links are active with workgroups partitioned evenly across them.
-  std::vector<int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> wgs_per_active_link(int timestep, int num_wgs) const override;
 
   /// @brief A single timestep: every destination is served at once.
   int num_timesteps() const override;
@@ -186,11 +177,8 @@ class two_shot_all_reduce_algorithm_t : public collective_algorithm_t {
   /// @brief Reduce phase (steps < N) pulls and sums each slice; broadcast phase pushes it out.
   schedule_entry_t link_of(int pid, int timestep, int my_rank) const override;
 
-  /// @brief Remote workgroups spread over the N-1 links (fewer in the reduce phase's self-step).
-  int wgs_on_link(int timestep, int num_wgs) const override;
-
   /// @brief All N-1 links active each step, workgroups spread evenly across them.
-  std::vector<int> active_links(int timestep, int num_wgs) const override;
+  std::vector<int> wgs_per_active_link(int timestep, int num_wgs) const override;
 
   /// @brief 2N-1 rounds: N reduce steps (incl. self) then N-1 broadcast steps.
   int num_timesteps() const override;

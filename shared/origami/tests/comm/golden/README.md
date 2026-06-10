@@ -10,10 +10,10 @@ sampled tuple across 9 algorithms × 3 world-sizes (2/4/8). 5,936 rows.
 
 Columns:
 
-| column     | meaning                                                |
-|------------|--------------------------------------------------------|
-| `layout`   | algorithm name (e.g. `RingAllGather`); legacy header   |
-| `num_gpus` | world size                                             |
+| column      | meaning                                                |
+|-------------|--------------------------------------------------------|
+| `algorithm` | algorithm name (e.g. `RingAllGather`)                  |
+| `num_gpus`  | world size                                             |
 | `pid`      | logical workgroup id (0..7 sample)                     |
 | `timestep` | algorithm tick (0..num_timesteps-1)                    |
 | `my_rank`  | this GPU's rank                                        |

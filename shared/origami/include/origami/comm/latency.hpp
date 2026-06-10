@@ -184,36 +184,61 @@ std::pair<std::size_t, std::size_t> iter_counts_from_tile(
     std::size_t cl_per_iter);
 
 /**
+ * @brief Geometry of one workgroup tile for the pipelined-iteration count.
+ *
+ * Describes the tile compute_wg_tile_latency streams. cachelines and elements
+ * are the totals the iteration model consumes directly; the optional shape
+ * refines the iteration count for strided tiles (each row is walked separately,
+ * so its partial final line cannot merge with the next row). When shape is
+ * absent the tile is treated as one flat contiguous byte run.
+ */
+struct wg_tile_geometry_t {
+  std::size_t cachelines;                            ///< Total cache lines in the tile.
+  std::size_t elements;                              ///< Total elements in the tile.
+  std::optional<tile_shape_t> shape = std::nullopt;  ///< Present -> strided per-row walk.
+
+  /// @brief Build from a tile shape, deriving cachelines/elements (clamped to >= 1).
+  static wg_tile_geometry_t from_shape(const tile_shape_t& tile) {
+    return {std::max<std::size_t>(tile.cachelines(), 1),
+            std::max<std::size_t>(tile.elements(), 1),
+            tile};
+  }
+};
+
+/**
+ * @brief Loop-invariant context shared across every wg_tile latency query.
+ *
+ * compute_wg_tile_latency is called once per (timestep, link) while these inputs
+ * stay fixed for the whole collective, so they are grouped into one view rather
+ * than threaded through individually. Holds non-owning references; the referents
+ * must outlive the calls.
+ */
+struct latency_context_t {
+  const comm_config_t& config;  ///< Comm kernel config (load width, WG count, ...).
+  const system_t& system;       ///< GPU + fabric hardware.
+  const heuristics_t& heur             = DEFAULT_HEURISTICS;  ///< Tunable heuristics.
+  std::optional<primitive_t> primitive = std::nullopt;  ///< Collective context for the xGMI ramp.
+};
+
+/**
  * @brief Full wg_tile transfer latency for one timestep, in cycles.
  *
  * Composes resolve_work_graph + compute_iter_times into the software-pipelined
- * loop model: T_total = T_prologue + (num_iters − 1) × T_wlt + T_epilogue +
+ * loop model: T_total = T_prologue + (num_iters - 1) × T_wlt + T_epilogue +
  * T_sync.
  *
  * @param work_graph Ordered communication ops for this rank's timestep.
- * @param wg_tile_cachelines Total cache lines in the WG tile.
- * @param config Communication kernel configuration (load width, WG count, etc.).
- * @param system GPU + fabric hardware description (@see origami::comm::system_t).
+ * @param geometry WG tile geometry (cache lines, elements, optional shape).
  * @param bw_per_wg Per-workgroup share of link bandwidth (bytes/cycle).
- * @param wg_tile_elements Total elements in the WG tile.
  * @param active_cus Number of concurrently active CUs (drives contention scaling).
- * @param wg_tile Optional tile shape for the strided-walk iteration count;
- *        defaults to nullopt (flat contiguous run).
- * @param heur Tunable heuristic parameters (defaults to DEFAULT_HEURISTICS).
- * @param primitive Optional collective context for the xGMI-write ramp.
+ * @param ctx Loop-invariant context (config, system, heuristics, collective).
  * @return wg_tile_latency_breakdown_t Per-stage and per-FU cycle breakdown,
  *         including total cycles and the clock used for any cycle→time step.
  */
-wg_tile_latency_breakdown_t compute_wg_tile_latency(
-    const std::vector<op_t>& work_graph,
-    std::size_t wg_tile_cachelines,
-    const comm_config_t& config,
-    const system_t& system,
-    double bw_per_wg,
-    std::size_t wg_tile_elements,
-    int active_cus,
-    std::optional<tile_shape_t> wg_tile  = std::nullopt,
-    const heuristics_t& heur             = DEFAULT_HEURISTICS,
-    std::optional<primitive_t> primitive = std::nullopt);
+wg_tile_latency_breakdown_t compute_wg_tile_latency(const std::vector<op_t>& work_graph,
+                                                    const wg_tile_geometry_t& geometry,
+                                                    double bw_per_wg,
+                                                    int active_cus,
+                                                    const latency_context_t& ctx);
 
 }  // namespace origami::comm

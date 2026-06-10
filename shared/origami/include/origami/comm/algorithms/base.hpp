@@ -42,7 +42,7 @@
 //   • chunks_per_timestep() — how finely each GPU's tile is sliced per step.
 //     A ring sends 1/N of the buffer per hop (chunks = N); a whole-tile step
 //     sends all of it (chunks = 1). This sets the per-step wire bytes.
-//   • active_links()        — how the workgroups spread across the links lit
+//   • wgs_per_active_link() — how the workgroups spread across the links lit
 //     up this step, which sets per-link contention.
 //
 // Closed-form vs iterative — where the loop lives:
@@ -53,11 +53,11 @@
 //     algorithm loops over the communication rounds.
 //   • Iterative (the caller): the cost engine in collective.cpp walks the
 //     timeline — `for timestep in [0, num_timesteps())` — invoking link_of and
-//     active_links once per round and summing the priced work. That external
+//     wgs_per_active_link once per round and summing the priced work. That external
 //     loop is the only place the schedule is actually "stepped through"; the
 //     staggered sweep through peers, for instance, emerges from successive
 //     timesteps, not from any loop inside link_of.
-//   • The small bounded loops you do see inside active_links / ring_distribute
+//   • The small bounded loops you do see inside wgs_per_active_link / ring_distribute
 //     fill a vector over the <= N-1 links of a SINGLE step — they build one
 //     step's data, they do not iterate the schedule.
 // Because the per-call work is closed-form and stateless, the algorithms fold
@@ -174,27 +174,23 @@ class collective_algorithm_t {
   virtual schedule_entry_t link_of(int pid, int timestep, int my_rank) const = 0;
 
   /**
-   * @brief Number of workgroups sharing a single active link this timestep.
+   * @brief Workgroup count on each link lit up this timestep.
    *
-   * @param timestep Communication round index (0-based).
-   * @param num_wgs Total workgroups participating in the collective.
-   * @return Per-link workgroup count, used to price per-link contention.
-   */
-  virtual int wgs_on_link(int timestep, int num_wgs) const = 0;
-
-  /**
-   * @brief Per-link workgroup counts for the links lit up this timestep.
-   *
-   * One entry per active link, holding the workgroups assigned to it; a link's
-   * position in the vector is its id (ids are dense 0-based indices and no
-   * consumer needs them beyond iterating the counts). The values sum to num_wgs
-   * (conservation).
+   * One entry per active link, holding the workgroups assigned to it; the
+   * vector's length is the number of active links and each entry is a workgroup
+   * count (a link's position in the vector is its dense 0-based id, which no
+   * consumer needs beyond iterating the counts). Each count prices that link's
+   * contention, and this is the sole per-link quantity the cost engine consumes.
+   * The ring algorithms conserve exactly (the counts sum to num_wgs via
+   * ring_distribute); the direct staggered/partitioned/two-shot algorithms
+   * instead report the floored remote share per link, excluding the self-step
+   * workgroups that use no fabric link, so their counts sum to less than num_wgs.
    *
    * @param timestep Communication round index (0-based).
    * @param num_wgs Total workgroups participating in the collective.
    * @return Workgroup count per active link.
    */
-  virtual std::vector<int> active_links(int timestep, int num_wgs) const = 0;
+  virtual std::vector<int> wgs_per_active_link(int timestep, int num_wgs) const = 0;
 
   /**
    * @brief Number of dependent communication rounds the algorithm takes.
