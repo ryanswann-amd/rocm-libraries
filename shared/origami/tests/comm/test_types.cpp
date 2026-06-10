@@ -56,19 +56,19 @@ TEST(tile_shape_contiguous_dense) {
   tile_shape_t t{1, 64, data_type_t::BFloat16};
   CHECK(t.element_bytes() == 2);
   CHECK(t.bytes() == 128);
-  CHECK(t.cachelines() == 2);
-  auto [r, c] = t.cacheline_shape();
+  CHECK(t.cachelines(64) == 2);
+  auto [r, c] = t.cacheline_shape(64);
   CHECK(r == 1);
   CHECK(c == 2);
-  CHECK_NEAR(t.cacheline_efficiency(), 1.0, 1e-12);
+  CHECK_NEAR(t.cacheline_efficiency(64), 1.0, 1e-12);
 }
 
 TEST(tile_shape_contiguous_partial) {
   // 1 BF16 element = 2 bytes → rounds up to 1 cacheline (efficiency = 2/64).
   tile_shape_t t{1, 1, data_type_t::BFloat16};
   CHECK(t.bytes() == 2);
-  CHECK(t.cachelines() == 1);
-  CHECK_NEAR(t.cacheline_efficiency(), 2.0 / 64.0, 1e-12);
+  CHECK(t.cachelines(64) == 1);
+  CHECK_NEAR(t.cacheline_efficiency(64), 2.0 / 64.0, 1e-12);
 }
 
 // ─── tile_shape_t: non-contiguous (column-stripe) regime ───────────
@@ -77,9 +77,9 @@ TEST(tile_shape_non_contiguous_row_padding) {
   tile_shape_t t{8, 17, data_type_t::BFloat16, /*split_dim=*/1, /*contiguous=*/false};
   CHECK(t.element_bytes() == 2);
   CHECK(t.bytes() == 8 * 17 * 2);  // useful bytes
-  CHECK(t.cl_per_row() == 1);      // 34B → 1 cl
-  CHECK(t.cachelines() == 8);      // 8 rows × 1 cl
-  auto [r, c] = t.cacheline_shape();
+  CHECK(t.cl_per_row(64) == 1);    // 34B → 1 cl
+  CHECK(t.cachelines(64) == 8);    // 8 rows × 1 cl
+  auto [r, c] = t.cacheline_shape(64);
   CHECK(r == 8);
   CHECK(c == 1);
 }
@@ -138,7 +138,7 @@ TEST(comm_problem_split_dim_0) {
   auto t = cp.gpu_tile_shape();
   CHECK(t.contiguous);
   // Dense: bytes / 64 = 2048 cl.
-  CHECK(cp.gpu_tile_cachelines() == 128ULL * 512ULL * 2ULL / 64);
+  CHECK(cp.gpu_tile_cachelines(64) == 128ULL * 512ULL * 2ULL / 64);
 }
 
 TEST(comm_problem_split_dim_1) {

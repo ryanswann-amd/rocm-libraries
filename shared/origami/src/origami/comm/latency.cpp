@@ -36,7 +36,7 @@ iter_times_t compute_iter_times(const functional_unit_work_t& work,
                                 std::optional<primitive_t> primitive) {
   const hardware_t& hw           = system.gpu;
   const comm_hardware_t& comm_hw = system.fabric;
-  constexpr double CL            = static_cast<double>(CACHELINE_BYTES);
+  const double CL                = static_cast<double>(hw.cacheline_bytes);
   iter_times_t t{};
 
   // ── VMEM ──
@@ -121,13 +121,14 @@ std::pair<std::size_t, std::size_t> iter_counts_from_tile(
     const std::optional<tile_shape_t>& wg_tile,
     std::size_t wg_tile_cachelines,
     std::size_t wg_tile_elements,
-    std::size_t cl_per_iter) {
+    std::size_t cl_per_iter,
+    std::size_t cacheline_bytes) {
   // Strided tile: each of the m rows is walked on its own (a row's partial final
   // line can't merge with the next row), so iters = m * ceil(cl_per_row / cl_per_iter)
   // and each iteration reduces one row's-worth of columns spread over its iters_per_row.
   if (wg_tile.has_value() && !wg_tile->contiguous) {
     const std::size_t iters_per_row =
-        std::max<std::size_t>(ceil_div(wg_tile->cl_per_row(), cl_per_iter), 1);
+        std::max<std::size_t>(ceil_div(wg_tile->cl_per_row(cacheline_bytes), cl_per_iter), 1);
     const std::size_t num_iters = std::max<std::size_t>(wg_tile->m * iters_per_row, 1);
     const std::size_t elements_per_iter =
         std::max<std::size_t>(ceil_div(wg_tile->n, iters_per_row), 1);
@@ -148,11 +149,12 @@ wg_tile_latency_breakdown_t compute_wg_tile_latency(const std::vector<op_t>& wor
                                                     const latency_context_t& ctx) {
   const hardware_t& hw           = ctx.system.gpu;
   const comm_hardware_t& comm_hw = ctx.system.fabric;
-  const std::size_t cl_per_iter  = static_cast<std::size_t>(ctx.config.cl_per_iter());
-  const int instrs_per_cl        = ctx.config.instrs_per_cl();
+  const std::size_t cl_per_iter =
+      static_cast<std::size_t>(ctx.config.cl_per_iter(hw.cacheline_bytes));
+  const int instrs_per_cl = ctx.config.instrs_per_cl(hw.cacheline_bytes);
 
-  auto [num_iters, elements_per_iter] =
-      iter_counts_from_tile(geometry.shape, geometry.cachelines, geometry.elements, cl_per_iter);
+  auto [num_iters, elements_per_iter] = iter_counts_from_tile(
+      geometry.shape, geometry.cachelines, geometry.elements, cl_per_iter, hw.cacheline_bytes);
 
   const auto resolved = resolve_work_graph(
       work_graph,

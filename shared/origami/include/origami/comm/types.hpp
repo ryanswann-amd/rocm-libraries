@@ -69,15 +69,6 @@ namespace origami::comm {
 class collective_algorithm_t;
 
 /**
- * @brief CDNA cache-line size in bytes (64 B).
- *
- * The CDNA cache line is 64 B: the granularity at which TCP/L2/MALL/HBM and
- * the xGMI fabric tag, fetch, and evict data. All traffic in the model is
- * rounded up to whole lines because that is what the silicon actually moves.
- */
-inline constexpr std::size_t CACHELINE_BYTES = 64;
-
-/**
  * @brief Alias for the canonical Origami data-type enum.
  *
  * Reuse the canonical Origami data-type enum rather than defining a second,
@@ -136,15 +127,16 @@ constexpr int load_width_bytes(load_width_t w) noexcept { return static_cast<int
 /**
  * @brief VMEM instructions needed to touch one cache line.
  *
- * Instructions needed to touch one cache line = 64 B / bytes-per-instr. This
- * converts a cache-line count (the bandwidth view) into a VMEM-issue count
+ * Instructions needed to touch one cache line = cacheline_bytes / bytes-per-instr.
+ * This converts a cache-line count (the bandwidth view) into a VMEM-issue count
  * (the issue-rate view) so latency.hpp can compare the two ceilings.
  *
  * @param w Load width.
- * @return int Instructions per 64 B cache line.
+ * @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
+ * @return int Instructions per cache line.
  */
-constexpr int instrs_per_cacheline(load_width_t w) noexcept {
-  return static_cast<int>(CACHELINE_BYTES) / load_width_bytes(w);
+constexpr int instrs_per_cacheline(load_width_t w, std::size_t cacheline_bytes) noexcept {
+  return static_cast<int>(cacheline_bytes) / load_width_bytes(w);
 }
 
 // ─── direction_t / reduce_op_t (carried through op_t resolution) ───────
@@ -327,14 +319,15 @@ struct tile_shape_t {
   /**
    * @brief Cache lines spanned by a single row, rounding up.
    *
-   * A row whose byte length is not a multiple of 64 still consumes a whole
-   * final line. This rounding is the entire source of cache-line inefficiency
-   * for strided tiles.
+   * A row whose byte length is not a whole multiple of the cache-line size still
+   * consumes a whole final line. This rounding is the entire source of
+   * cache-line inefficiency for strided tiles.
    *
+   * @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
    * @return std::size_t Cache lines per row.
    */
-  constexpr std::size_t cl_per_row() const noexcept {
-    return ceil_div(n * static_cast<std::size_t>(element_bytes()), CACHELINE_BYTES);
+  constexpr std::size_t cl_per_row(std::size_t cacheline_bytes) const noexcept {
+    return ceil_div(n * static_cast<std::size_t>(element_bytes()), cacheline_bytes);
   }
 
   /**
@@ -347,22 +340,25 @@ struct tile_shape_t {
    * m × cl_per_row — which can be far more traffic than the same bytes laid
    * out contiguously.
    *
+   * @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
    * @return std::size_t Total cache lines moved.
    */
-  constexpr std::size_t cachelines() const noexcept {
-    if (contiguous) { return std::max<std::size_t>(ceil_div(bytes(), CACHELINE_BYTES), 1); }
-    return m * cl_per_row();
+  constexpr std::size_t cachelines(std::size_t cacheline_bytes) const noexcept {
+    if (contiguous) { return std::max<std::size_t>(ceil_div(bytes(), cacheline_bytes), 1); }
+    return m * cl_per_row(cacheline_bytes);
   }
 
   /**
    * @brief Logical 2D cacheline footprint.
    *
+   * @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
    * @return std::pair<std::size_t, std::size_t> (rows, cache lines per row);
    *         a contiguous tile collapses to a single row.
    */
-  constexpr std::pair<std::size_t, std::size_t> cacheline_shape() const noexcept {
-    if (contiguous) return {1, cachelines()};
-    return {m, cl_per_row()};
+  constexpr std::pair<std::size_t, std::size_t> cacheline_shape(
+      std::size_t cacheline_bytes) const noexcept {
+    if (contiguous) return {1, cachelines(cacheline_bytes)};
+    return {m, cl_per_row(cacheline_bytes)};
   }
 
   /**
@@ -373,10 +369,11 @@ struct tile_shape_t {
    * lever that makes a poorly-aligned strided collective slower than its byte
    * count suggests.
    *
+   * @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
    * @return double Packing efficiency in (0, 1].
    */
-  constexpr double cacheline_efficiency() const noexcept {
-    const std::size_t transferred = cachelines() * CACHELINE_BYTES;
+  constexpr double cacheline_efficiency(std::size_t cacheline_bytes) const noexcept {
+    const std::size_t transferred = cachelines(cacheline_bytes) * cacheline_bytes;
     if (transferred == 0) return 1.0;
     return static_cast<double>(bytes()) / static_cast<double>(transferred);
   }
@@ -480,13 +477,13 @@ struct comm_problem_t {
   }
 
   /** @brief Cache lines moved for one rank's tile. */
-  constexpr std::size_t gpu_tile_cachelines() const noexcept {
-    return gpu_tile_shape().cachelines();
+  constexpr std::size_t gpu_tile_cachelines(std::size_t cacheline_bytes) const noexcept {
+    return gpu_tile_shape().cachelines(cacheline_bytes);
   }
 
   /** @brief Packing efficiency of one rank's tile (useful ÷ transferred bytes). */
-  constexpr double cacheline_efficiency() const noexcept {
-    const std::size_t transferred = gpu_tile_cachelines() * CACHELINE_BYTES;
+  constexpr double cacheline_efficiency(std::size_t cacheline_bytes) const noexcept {
+    const std::size_t transferred = gpu_tile_cachelines(cacheline_bytes) * cacheline_bytes;
     if (transferred == 0) return 1.0;
     return static_cast<double>(gpu_tile_bytes()) / static_cast<double>(transferred);
   }
@@ -529,12 +526,20 @@ struct comm_config_t {
    * @return int Bytes moved per iteration.
    */
   constexpr int bytes_per_iter() const noexcept { return vgprs_for_data * 4; }
-  /** @brief Cache lines moved per pipelined iteration. */
-  constexpr int cl_per_iter() const noexcept {
-    return bytes_per_iter() / static_cast<int>(CACHELINE_BYTES);
+  /**
+   * @brief Cache lines moved per pipelined iteration.
+   * @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
+   */
+  constexpr int cl_per_iter(std::size_t cacheline_bytes) const noexcept {
+    return bytes_per_iter() / static_cast<int>(cacheline_bytes);
   }
-  /** @brief VMEM instructions needed per cache line at the configured load width. */
-  constexpr int instrs_per_cl() const noexcept { return instrs_per_cacheline(load_width); }
+  /**
+   * @brief VMEM instructions needed per cache line at the configured load width.
+   * @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
+   */
+  constexpr int instrs_per_cl(std::size_t cacheline_bytes) const noexcept {
+    return instrs_per_cacheline(load_width, cacheline_bytes);
+  }
 
   /**
    * @brief Effective (not requested) workgroup count for bandwidth scaling.

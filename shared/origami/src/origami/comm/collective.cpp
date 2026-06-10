@@ -30,10 +30,14 @@ namespace origami::comm {
 
 double ring_step_overhead_cycles(primitive_t primitive,
                                  const collective_algorithm_t& algorithm,
-                                 const heuristics_t& heur) {
+                                 const heuristics_t& heur,
+                                 const comm_hardware_t& fabric) {
   if (!algorithm.is_ring_class()) return 0.0;
-  const double per_step = heur.ring_step_overhead(primitive);
-  return per_step * static_cast<double>(algorithm.num_timesteps());
+  // The heuristic is host wall time (ns); convert to cycles at the actual GPU
+  // clock. clock_ghz is cycles-per-ns, so cycles = ns × clock_ghz exactly.
+  const double per_step_ns = heur.ring_step_overhead_ns_for(primitive);
+  const double total_ns    = per_step_ns * static_cast<double>(algorithm.num_timesteps());
+  return total_ns * fabric.clock_ghz;
 }
 
 double compute_ring_latency(const collective_algorithm_t& algorithm,
@@ -45,14 +49,14 @@ double compute_ring_latency(const collective_algorithm_t& algorithm,
   const hardware_t& hw           = system.gpu;
   const comm_hardware_t& comm_hw = system.fabric;
   const int num_timesteps        = algorithm.num_timesteps();
-  const std::size_t CL           = CACHELINE_BYTES;
+  const std::size_t CL           = hw.cacheline_bytes;
 
   // A ring moves one chunk per step; over num_timesteps steps each GPU pushes
   // num_timesteps such chunks across its outgoing link. That product is the
   // total bytes this rank puts on the wire — the numerator of the throughput
   // model.
   const std::size_t gpu_timestep_tile_bytes =
-      problem.gpu_tile_cachelines() * CL /
+      problem.gpu_tile_cachelines(hw.cacheline_bytes) * CL /
       static_cast<std::size_t>(algorithm.chunks_per_timestep());
   const std::size_t total_wire_bytes =
       gpu_timestep_tile_bytes * static_cast<std::size_t>(num_timesteps);
@@ -99,7 +103,8 @@ double compute_ring_latency(const collective_algorithm_t& algorithm,
 
   // Per-step proxy/handshake overhead the bandwidth model cannot see (CPU-
   // mediated; empirical, from heuristics). Keyed by the collective being run.
-  const double T_step_overhead = ring_step_overhead_cycles(problem.collective, algorithm, heur);
+  const double T_step_overhead =
+      ring_step_overhead_cycles(problem.collective, algorithm, heur, comm_hw);
 
   // Fixed launch floor + the throughput-bound transfer + serial sync + per-step
   // overhead. Launch dominates tiny messages; transfer dominates large ones.
@@ -128,7 +133,8 @@ double compute_sequential_latency(const collective_algorithm_t& algorithm,
 
   const tile_shape_t wg_tile =
       gpu_timestep_tile.divide_byte_equal(static_cast<std::size_t>(eff_wgs));
-  const wg_tile_geometry_t wg_geometry = wg_tile_geometry_t::from_shape(wg_tile);
+  const wg_tile_geometry_t wg_geometry =
+      wg_tile_geometry_t::from_shape(wg_tile, hw.cacheline_bytes);
   const latency_context_t lat_ctx{config, system, heur, primitive};
 
   // This loop is the iterative driver of the schedule: the algorithm methods are
@@ -173,7 +179,7 @@ double compute_sequential_latency(const collective_algorithm_t& algorithm,
     }
   }
 
-  const double T_step_overhead = ring_step_overhead_cycles(primitive, algorithm, heur);
+  const double T_step_overhead = ring_step_overhead_cycles(primitive, algorithm, heur, comm_hw);
   return comm_hw.launch_overhead_cycles + T_timesteps + T_step_overhead;
 }
 

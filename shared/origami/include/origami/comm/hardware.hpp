@@ -114,6 +114,13 @@ struct hardware_t {
   /// workgroups stream a collective.)
   std::array<double, 3> mem_bw_coeffs = {0.0, 0.015, 0.0};
 
+  /// Cache-line size in bytes: the granularity at which TCP/L2/MALL/HBM and the
+  /// xGMI fabric tag, fetch, and evict data. The model rounds all traffic up to
+  /// whole lines because that is what the silicon actually moves. This is a
+  /// per-architecture property (64 B on CDNA), not a global constant, so a
+  /// future GPU with a different line size only edits its hardware table entry.
+  std::size_t cacheline_bytes = 64;
+
   // ── BW polynomial ──────────────────────────────────────────
   /**
    * @brief Fraction of peak HBM bandwidth sustainable with `active_cus` streaming.
@@ -461,6 +468,7 @@ inline constexpr hardware_t MI300X = {
     /* hbm_write_bw         */ 5140.0 / _MI300X_CLOCK_GHZ,
     /* hbm_capacity_bytes   */ 192ULL * 1024ULL * 1024ULL * 1024ULL,
     /* mem_bw_coeffs        */ {0.0, 0.015, 0.0},
+    /* cacheline_bytes      */ 64,
 };
 
 /**

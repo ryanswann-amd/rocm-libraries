@@ -174,6 +174,7 @@ iter_times_t compute_iter_times(const functional_unit_work_t& work,
  * @param wg_tile_cachelines Total cache lines in the WG tile.
  * @param wg_tile_elements Total elements in the WG tile.
  * @param cl_per_iter Cache lines transferred per pipelined iteration.
+ * @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
  * @return std::pair<std::size_t, std::size_t> {num_iters, elements_per_iter};
  *         both are >= 1.
  */
@@ -181,7 +182,8 @@ std::pair<std::size_t, std::size_t> iter_counts_from_tile(
     const std::optional<tile_shape_t>& wg_tile,
     std::size_t wg_tile_cachelines,
     std::size_t wg_tile_elements,
-    std::size_t cl_per_iter);
+    std::size_t cl_per_iter,
+    std::size_t cacheline_bytes);
 
 /**
  * @brief Geometry of one workgroup tile for the pipelined-iteration count.
@@ -198,8 +200,9 @@ struct wg_tile_geometry_t {
   std::optional<tile_shape_t> shape = std::nullopt;  ///< Present -> strided per-row walk.
 
   /// @brief Build from a tile shape, deriving cachelines/elements (clamped to >= 1).
-  static wg_tile_geometry_t from_shape(const tile_shape_t& tile) {
-    return {std::max<std::size_t>(tile.cachelines(), 1),
+  /// @param cacheline_bytes Hardware cache-line size (hardware_t::cacheline_bytes).
+  static wg_tile_geometry_t from_shape(const tile_shape_t& tile, std::size_t cacheline_bytes) {
+    return {std::max<std::size_t>(tile.cachelines(cacheline_bytes), 1),
             std::max<std::size_t>(tile.elements(), 1),
             tile};
   }
