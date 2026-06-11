@@ -51,6 +51,8 @@
 #include <cstdint>
 #include <string_view>
 
+#include "origami/architecture.hpp"
+
 namespace origami::comm {
 
 // ─── hardware_t (per-CU and per-XCD compute / memory) ──────────────
@@ -64,8 +66,11 @@ namespace origami::comm {
  * units.
  */
 struct hardware_t {
-  /// Architecture identifier string (e.g. "gfx942").
-  std::string_view arch;
+  /// GPU architecture identity. Reuses the canonical origami::architecture_t
+  /// enum (from the HIP-free origami/architecture.hpp) rather than a private
+  /// string label, so "which GPU" has a single source of truth across the GEMM
+  /// and comm models.
+  architecture_t arch;
 
   // Die structure
   int num_cu;        ///< Total compute units across the whole device.
@@ -448,7 +453,7 @@ inline constexpr double _MI300X_CLOCK_GHZ = 2.0;
  *   mem_bw_coeffs              : HBM utilization-vs-active-CU fit (see above).
  */
 inline constexpr hardware_t MI300X = {
-    /* arch                 */ "gfx942",
+    /* arch                 */ architecture_t::gfx942,
     /* num_cu               */ 304,
     /* num_xcd              */ 8,
     /* cu_per_xcd           */ 38,
