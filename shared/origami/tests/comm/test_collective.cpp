@@ -39,6 +39,7 @@
 // Predictions span ~10 to ~10^5 µs so 1e-9 absolute is well below
 // machine-epsilon-of-the-value across the entire range.
 #include "test_harness.hpp"
+#include "test_system.hpp"
 
 #include "origami/comm/collective.hpp"
 #include "origami/comm/hardware.hpp"

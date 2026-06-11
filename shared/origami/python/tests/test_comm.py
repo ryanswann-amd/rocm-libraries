@@ -51,6 +51,24 @@ def _import_origami():
 origami = _import_origami()
 comm = origami.comm
 
+# The library no longer ships a hardcoded default system: production callers build
+# one for the device they are about to run on. The goldens were frozen against the
+# nominal MI300X machine, so reconstruct it explicitly here (no GPU required) from
+# the calibrated gfx942 ceilings and the part's full-die topology at 2.0 GHz. This
+# is byte-identical to the constants the model used to ship inline.
+_GFX942 = origami.architecture_t.gfx942
+_SYS = comm.make_system(
+    comm.get_arch_ceilings(_GFX942),
+    comm.gpu_topology_t(
+        arch=_GFX942,
+        num_cu=304,
+        num_xcd=8,
+        cu_per_xcd=38,
+        l2_capacity_bytes=4 * 1024 * 1024,
+    ),
+    2.0,
+)
+
 # ── Golden CSV location (shared/origami/tests/comm/golden) ────────────────
 _GOLDEN = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "tests", "comm", "golden")
@@ -82,6 +100,7 @@ def test_predict_row_matches_golden():
             int(r["msg_bytes"]),
             int(r["world_size"]),
             int(r["num_wgs"]),
+            _SYS,
         )
         exp = float(r["T_us"])
         worst = max(worst, abs(got - exp))
@@ -106,7 +125,7 @@ def test_compute_collective_latency_matches_golden():
             collective=getattr(comm.primitive_t, r["primitive"]),
         )
         config = comm.comm_config_t(num_wgs=int(r["num_wgs"]))
-        got = comm.compute_collective_latency(problem, config)
+        got = comm.compute_collective_latency(problem, config, _SYS)
         exp = float(r["T_cycles"])
         worst = max(worst, abs(got - exp))
         assert abs(got - exp) <= _CYCLE_TOL, (
@@ -127,6 +146,7 @@ def test_predict_tensor_collective_matches_golden():
             shape,
             r["dtype"],
             int(r["world_size"]),
+            _SYS,
             dim=int(r["dim"]),
             nchannels=int(r["nchannels"]),
             framework=r["framework"],
@@ -160,7 +180,7 @@ def test_string_and_enum_problem_agree():
     # the enum. For a no-shape row they must agree after the cycles->us
     # conversion the public boundary performs.
     msg_bytes, world, nch = 64 * 1024, 8, 32
-    us_from_name = comm.predict_row("all_reduce", msg_bytes, world, nch)
+    us_from_name = comm.predict_row("all_reduce", msg_bytes, world, nch, _SYS)
 
     # predict_row treats a bare buffer as a 1xN bf16 row (2 bytes/elem).
     problem = comm.comm_problem_t(
@@ -170,7 +190,7 @@ def test_string_and_enum_problem_agree():
         collective=comm.primitive_t.all_reduce,
     )
     config = comm.comm_config_t(num_wgs=nch)
-    cycles = comm.compute_collective_latency(problem, config)
-    us_from_enum = comm.MI300X_SYSTEM.gpu.cycles_to_us(cycles)
+    cycles = comm.compute_collective_latency(problem, config, _SYS)
+    us_from_enum = _SYS.gpu.cycles_to_us(cycles)
 
     assert abs(us_from_name - us_from_enum) <= _US_TOL

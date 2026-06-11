@@ -42,13 +42,16 @@
 // Unit identity used throughout: a rate quoted in GB/s equals
 //   (GB/s) / clock_ghz  bytes-per-cycle,
 // because bytes/cycle = (bytes/ns) / (cycles/ns) = (GB/s) / clock_ghz. That is
-// why the MI300X table below writes peak aggregate rates as "<GB/s> / clock".
+// why make_system() converts each calibrated peak aggregate rate (held in
+// arch_ceilings_t in native GB/s) to bytes/cycle as "<GB/s> / clock", and each
+// native-ns latency to cycles as "<ns> * clock".
 #pragma once
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string_view>
 
 #include "origami/architecture.hpp"
@@ -416,98 +419,192 @@ struct system_t {
   comm_hardware_t fabric;  ///< the xGMI mesh between GPUs
 };
 
-// ─── MI300X (CDNA3, gfx942) ──────────────────────────────────────
+// ─── gpu_topology_t (live, per-device shape) ────────────────────────
 /**
- * @brief Nominal CDNA3 compute-engine clock used to derive the MI300X tables.
+ * @brief Per-device GPU topology: the part of the machine description that comes
+ *        from the actual chip in the box, not from calibration.
  *
- * 2.0 GHz is the nominal CDNA3 compute-engine clock; every "X / clock" and
- * "X * clock" below converts a natively-measured rate or latency into the
- * model's cycle units (see the unit identity at the top of this file).
+ * These are the quantities a runtime query (hipDeviceProp_t, via
+ * origami::hardware_t) reports and that differ between otherwise-identical
+ * silicon — most importantly the CU/XCD counts under CPX-style partitioning,
+ * where the same gfx942 part exposes fewer CUs and XCDs. Pairing this with the
+ * calibrated @ref arch_ceilings_t lets @ref make_system build a system_t for the
+ * device actually about to run, instead of a hardcoded nominal one.
+ *
+ * @see origami::comm::system_from_device / system_from_hardware
+ *      (origami/comm/hardware_device.hpp).
  */
-inline constexpr double _MI300X_CLOCK_GHZ = 2.0;
+struct gpu_topology_t {
+  architecture_t arch;            ///< Architecture identity (keys the ceilings table).
+  std::size_t num_cu;             ///< Total compute units exposed by this device/partition.
+  std::size_t num_xcd;            ///< Number of XCDs exposed by this device/partition.
+  std::size_t cu_per_xcd;         ///< Compute units per XCD (num_cu / num_xcd).
+  std::size_t l2_capacity_bytes;  ///< Per-XCD L2/TCC capacity in bytes.
+};
 
+// ─── arch_ceilings_t (calibrated, per-architecture) ─────────────────
 /**
- * @brief MI300X (CDNA3, gfx942) hardware ceilings.
+ * @brief Per-architecture calibrated ceilings, in native units (GB/s, ns,
+ *        bytes), independent of clock and of device partitioning.
  *
- * Per-field derivations:
- *   num_cu/num_xcd/cu_per_xcd  : CDNA3 die layout — num_xcd XCDs, each with
- *                                cu_per_xcd compute units (their product).
- *   vmem_issue_rate = 1.0      : one VMEM instruction issued per CU per cycle
- *                                (the memory pipe accepts one address/cycle).
- *   valu_rate = 2.10 * 64.0    : 64 lanes per SIMD × ~2.10 elements/lane/cycle
- *                                sustained (dual-issue + occupancy factor).
- *   tcp_capacity_bytes = 32 KiB: the vL1D/TCP per-CU cache; the request FIFO
- *                                saturates around ~5 wide loads in flight.
- *   tcp_bw = 64.0              : one global_load_dwordx16 per cycle = 64 B/cycle
- *                                — the widest VMEM transaction the lane can move.
- *   mshr_depth_per_wave = 12   : 12 outstanding dwordx4 misses per wave before
- *                                the wave stalls (the measured N=13 cliff).
- *   waves_per_wg = 10          : waves co-resident per workgroup feeding misses.
- *   xgmi_latency_cycles        : 660 ns measured remote-load round trip × clock
- *                                = 1320 cycles. This is the latency the MSHR
- *                                depth must hide to sustain remote bandwidth.
- *   l2/mall/hbm *_bw           : measured aggregate peaks (GB/s) ÷ clock to get
- *                                bytes/cycle; HBM write peak (5140) > read
- *                                (4730) on this part.
- *   hbm_capacity 192 GiB       : 8 HBM3 stacks.
- *   mem_bw_coeffs              : HBM utilization-vs-active-CU fit (see above).
+ * The communication analogue of origami::architecture_constants: the empirical
+ * data origami owns for an architecture, separated from the live topology. It is
+ * stored in *native* units — bandwidths in GB/s, latencies in nanoseconds — so
+ * the table reads in the units the microbenchmarks report and carries no clock
+ * assumption. @ref make_system converts these to the model's bytes-per-cycle and
+ * cycle units at build time using the target clock (see the unit identity at the
+ * top of this file): a GB/s rate becomes (GB/s)/clock bytes/cycle, and an ns
+ * latency becomes ns*clock cycles. Per-cycle rates, counts, capacities and the
+ * BW polynomial are already clock-free and pass through unchanged.
  */
-inline constexpr hardware_t MI300X = {
-    /* arch                 */ architecture_t::gfx942,
-    /* num_cu               */ 304,
-    /* num_xcd              */ 8,
-    /* cu_per_xcd           */ 38,
-    /* clock_ghz            */ _MI300X_CLOCK_GHZ,
-    /* vmem_issue_rate      */ 1.0,
-    /* valu_rate            */ 2.10 * 64.0,
-    /* tcp_capacity_bytes   */ 32ULL * 1024ULL,
-    /* tcp_bw               */ 64.0,
-    /* mshr_depth_per_wave  */ 12,
-    /* waves_per_wg         */ 10,
-    /* xgmi_latency_cycles  */ 660.0 * _MI300X_CLOCK_GHZ,
-    /* l2_capacity_bytes    */ 4ULL * 1024ULL * 1024ULL,
-    /* l2_bw_per_cu         */ 83.6 / _MI300X_CLOCK_GHZ,
-    /* mall_capacity_bytes  */ 256ULL * 1024ULL * 1024ULL,
-    /* mall_bw              */ 4730.0 / _MI300X_CLOCK_GHZ,
-    /* hbm_read_bw          */ 4730.0 / _MI300X_CLOCK_GHZ,
-    /* hbm_write_bw         */ 5140.0 / _MI300X_CLOCK_GHZ,
-    /* hbm_capacity_bytes   */ 192ULL * 1024ULL * 1024ULL * 1024ULL,
-    /* mem_bw_coeffs        */ {0.0, 0.015, 0.0},
-    /* cacheline_bytes      */ 64,
+struct arch_ceilings_t {
+  // Per-CU compute ceilings (clock-free: per-cycle or dimensionless).
+  double vmem_issue_rate;  ///< VMEM instructions per CU per cycle.
+  double valu_rate;        ///< VALU lane-elements per CU per cycle.
+
+  // Cache / memory structure (clock-free).
+  std::size_t tcp_capacity_bytes;       ///< Per-CU vL1D/TCP capacity.
+  double tcp_bw;                        ///< bytes per CU per cycle.
+  int mshr_depth_per_wave;              ///< Outstanding misses per wave before stall.
+  int waves_per_wg;                     ///< Waves co-resident per workgroup.
+  std::size_t mall_capacity_bytes;      ///< Device-wide MALL/Infinity Cache capacity.
+  std::size_t hbm_capacity_bytes;       ///< Total HBM capacity.
+  std::array<double, 3> mem_bw_coeffs;  ///< HBM utilization-vs-active-CU polynomial.
+  std::size_t cacheline_bytes;          ///< Cache-line / fabric transfer granularity.
+
+  // Measured aggregate GPU bandwidths, native GB/s (→ bytes/cycle at build).
+  double l2_bw_per_cu_GBps;  ///< Per-CU L2 bandwidth at full XCD occupancy.
+  double mall_bw_GBps;       ///< Aggregate MALL bandwidth.
+  double hbm_read_GBps;      ///< Aggregate HBM read bandwidth.
+  double hbm_write_GBps;     ///< Aggregate HBM write bandwidth.
+
+  // Measured GPU latency, native ns (→ cycles at build).
+  double xgmi_latency_ns;  ///< Remote-load round-trip latency.
+
+  // Fabric link / engine counts (clock-free).
+  int num_peer_links;    ///< xGMI links to peer GPUs.
+  int num_sdma_engines;  ///< SDMA (DMA-copy) engines.
+
+  // Measured fabric bandwidths, native GB/s (→ bytes/cycle at build).
+  // link_GBps is the payload rate (already discounted for wire/framing overhead).
+  double link_GBps;        ///< Per-link payload bandwidth.
+  double sdma_read_GBps;   ///< Per-engine SDMA read bandwidth.
+  double sdma_write_GBps;  ///< Per-engine SDMA write bandwidth.
+
+  // Measured fabric protocol latencies, native ns (→ cycles at build).
+  double atomic_latency_ns;   ///< One signal/wait fabric atomic.
+  double launch_overhead_ns;  ///< Fixed per-collective kernel launch/setup floor.
 };
 
 /**
- * @brief MI300X inter-GPU xGMI fabric ceilings.
+ * @brief Calibrated communication ceilings for an architecture, in native units.
  *
- * Inter-GPU fabric. Per-field derivations:
- *   link_bw : 49.1 GiB/s measured per-link wire rate, converted to decimal
- *             bytes/s (×1024^3 / 1e9), discounted by the 1.23× wire-to-payload
- *             overhead (flit framing + ECC), then ÷ clock to get payload
- *             bytes/cycle. Net ≈ 42.9 GB/s of usable payload per link.
- *   num_peer_links = 7 : an MI300X reaches the other 7 GPUs over a fully
- *             connected single-hop xGMI mesh (one link per peer).
- *   num_sdma_engines / sdma_*_bw : DMA-copy engines and their measured one-way
- *             rates (read faster than write), ÷ clock to bytes/cycle.
- *   atomic_latency_cycles : ~100 ns per signal/wait fabric atomic × clock.
- *             This is the cost charged per producer/consumer handshake.
- *   launch_overhead_cycles : ~45 µs fixed kernel-launch + setup floor × clock,
- *             charged once per collective; it dominates the sub-kilobyte regime.
+ * The communication analogue of origami::get_arch_constants. Only the
+ * architectures origami has microbenchmarked for collectives appear; today that
+ * is gfx942 (MI300X, CDNA3). The values are the per-link and aggregate rates and
+ * latencies measured on that part, in GB/s and ns — @ref make_system applies the
+ * clock conversion.
+ *
+ * @param arch Architecture enum value.
+ * @return arch_ceilings_t Native-unit ceilings for @p arch.
+ * @throws std::invalid_argument If no comm ceilings are calibrated for @p arch.
  */
-inline constexpr comm_hardware_t MI300X_COMM = {
-    /* link_bw                 */ 49.1 * (1024.0 * 1024.0 * 1024.0) / 1e9 / 1.23 /
-        _MI300X_CLOCK_GHZ,
-    /* num_peer_links          */ 7,
-    /* num_sdma_engines        */ 14,
-    /* sdma_read_bw            */ 49.5 / _MI300X_CLOCK_GHZ,
-    /* sdma_write_bw           */ 23.6 / _MI300X_CLOCK_GHZ,
-    /* atomic_latency_cycles   */ 100.0 * _MI300X_CLOCK_GHZ,
-    /* launch_overhead_cycles  */ 45000.0 * _MI300X_CLOCK_GHZ,
-    /* clock_ghz               */ _MI300X_CLOCK_GHZ,
-};
+constexpr arch_ceilings_t get_arch_ceilings(architecture_t arch) {
+  switch (arch) {
+    case architecture_t::gfx942:
+      // MI300X (CDNA3). vmem_issue_rate=1.0: one VMEM instr/CU/cycle.
+      // valu_rate=2.10*64: 64 lanes/SIMD × ~2.10 elem/lane/cycle. tcp_bw=64:
+      // one global_load_dwordx16/cycle. mshr_depth=12 (the measured N=13 cliff).
+      // xGMI 660 ns remote-load RTT. l2/mall/hbm GB/s are measured aggregate
+      // peaks (write peak > read on this part). link = 49.1 GiB/s wire rate →
+      // decimal bytes/s, discounted 1.23× wire-to-payload. 7 single-hop peers,
+      // 14 SDMA engines. atomic ~100 ns/handshake, ~45 µs launch floor.
+      return arch_ceilings_t{
+          /* vmem_issue_rate     */ 1.0,
+          /* valu_rate           */ 2.10 * 64.0,
+          /* tcp_capacity_bytes  */ 32ULL * 1024ULL,
+          /* tcp_bw              */ 64.0,
+          /* mshr_depth_per_wave */ 12,
+          /* waves_per_wg        */ 10,
+          /* mall_capacity_bytes */ 256ULL * 1024ULL * 1024ULL,
+          /* hbm_capacity_bytes  */ 192ULL * 1024ULL * 1024ULL * 1024ULL,
+          /* mem_bw_coeffs       */ {0.0, 0.015, 0.0},
+          /* cacheline_bytes     */ 64,
+          /* l2_bw_per_cu_GBps   */ 83.6,
+          /* mall_bw_GBps        */ 4730.0,
+          /* hbm_read_GBps       */ 4730.0,
+          /* hbm_write_GBps      */ 5140.0,
+          /* xgmi_latency_ns     */ 660.0,
+          /* num_peer_links      */ 7,
+          /* num_sdma_engines    */ 14,
+          /* link_GBps           */ 49.1 * (1024.0 * 1024.0 * 1024.0) / 1e9 / 1.23,
+          /* sdma_read_GBps      */ 49.5,
+          /* sdma_write_GBps     */ 23.6,
+          /* atomic_latency_ns   */ 100.0,
+          /* launch_overhead_ns  */ 45000.0,
+      };
+    default:
+      throw std::invalid_argument(
+          "origami::comm has no calibrated arch_ceilings_t for this architecture");
+  }
+}
 
 /**
- * @brief The default machine: one MI300X GPU on the MI300X xGMI fabric.
+ * @brief Fuse calibrated ceilings, live topology, and a clock into a system_t.
+ *
+ * The single place native-unit ceilings (GB/s, ns) and a device's topology meet
+ * the model's cycle units. Bandwidths are divided by the clock to get
+ * bytes/cycle and latencies multiplied by it to get cycles (the unit identity at
+ * the top of this file); per-cycle rates, counts, capacities and the BW
+ * polynomial pass through unchanged. Topology fields (CU/XCD counts, L2
+ * capacity) come from @p topo, so a CPX partition models its own reduced shape
+ * rather than the full part.
+ *
+ * @param ceilings Calibrated per-architecture ceilings in native units.
+ * @param topo Live GPU topology (from a device query or an explicit fixture).
+ * @param clock_ghz Target compute clock in GHz used for the unit conversion.
+ * @return system_t The assembled GPU + fabric machine description.
  */
-inline constexpr system_t MI300X_SYSTEM = {MI300X, MI300X_COMM};
+constexpr system_t make_system(const arch_ceilings_t& ceilings,
+                               const gpu_topology_t& topo,
+                               double clock_ghz) {
+  hardware_t gpu{};
+  gpu.arch                = topo.arch;
+  gpu.num_cu              = static_cast<int>(topo.num_cu);
+  gpu.num_xcd             = static_cast<int>(topo.num_xcd);
+  gpu.cu_per_xcd          = static_cast<int>(topo.cu_per_xcd);
+  gpu.clock_ghz           = clock_ghz;
+  gpu.vmem_issue_rate     = ceilings.vmem_issue_rate;
+  gpu.valu_rate           = ceilings.valu_rate;
+  gpu.tcp_capacity_bytes  = ceilings.tcp_capacity_bytes;
+  gpu.tcp_bw              = ceilings.tcp_bw;
+  gpu.mshr_depth_per_wave = ceilings.mshr_depth_per_wave;
+  gpu.waves_per_wg        = ceilings.waves_per_wg;
+  gpu.xgmi_latency_cycles = ceilings.xgmi_latency_ns * clock_ghz;
+  gpu.l2_capacity_bytes   = topo.l2_capacity_bytes;
+  gpu.l2_bw_per_cu        = ceilings.l2_bw_per_cu_GBps / clock_ghz;
+  gpu.mall_capacity_bytes = ceilings.mall_capacity_bytes;
+  gpu.mall_bw             = ceilings.mall_bw_GBps / clock_ghz;
+  gpu.hbm_read_bw         = ceilings.hbm_read_GBps / clock_ghz;
+  gpu.hbm_write_bw        = ceilings.hbm_write_GBps / clock_ghz;
+  gpu.hbm_capacity_bytes  = ceilings.hbm_capacity_bytes;
+  // Element-wise (std::array copy-assignment is not reliably constexpr in C++17).
+  gpu.mem_bw_coeffs[0] = ceilings.mem_bw_coeffs[0];
+  gpu.mem_bw_coeffs[1] = ceilings.mem_bw_coeffs[1];
+  gpu.mem_bw_coeffs[2] = ceilings.mem_bw_coeffs[2];
+  gpu.cacheline_bytes  = ceilings.cacheline_bytes;
+
+  comm_hardware_t fabric{};
+  fabric.link_bw                = ceilings.link_GBps / clock_ghz;
+  fabric.num_peer_links         = ceilings.num_peer_links;
+  fabric.num_sdma_engines       = ceilings.num_sdma_engines;
+  fabric.sdma_read_bw           = ceilings.sdma_read_GBps / clock_ghz;
+  fabric.sdma_write_bw          = ceilings.sdma_write_GBps / clock_ghz;
+  fabric.atomic_latency_cycles  = ceilings.atomic_latency_ns * clock_ghz;
+  fabric.launch_overhead_cycles = ceilings.launch_overhead_ns * clock_ghz;
+  fabric.clock_ghz              = clock_ghz;
+
+  return system_t{gpu, fabric};
+}
 
 }  // namespace origami::comm

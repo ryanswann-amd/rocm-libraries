@@ -70,7 +70,17 @@ if(TARGET roc::origami-comm)
 elseif(TARGET origami-comm)
     set(ORIGAMI_COMM_TARGET origami-comm)
 endif()
-target_link_libraries(_pyorigami PRIVATE ${ORIGAMI_TARGET} ${ORIGAMI_COMM_TARGET} hip::host)
+# The comm device bridge (system_from_device / system_from_hardware) is
+# HIP-dependent and lives in its own target; the bindings expose it so Python
+# callers can build a system_t from a live device.
+set(ORIGAMI_COMM_DEVICE_TARGET "")
+if(TARGET roc::origami-comm-device)
+    set(ORIGAMI_COMM_DEVICE_TARGET roc::origami-comm-device)
+elseif(TARGET origami-comm-device)
+    set(ORIGAMI_COMM_DEVICE_TARGET origami-comm-device)
+endif()
+target_link_libraries(_pyorigami PRIVATE ${ORIGAMI_TARGET} ${ORIGAMI_COMM_TARGET}
+                                         ${ORIGAMI_COMM_DEVICE_TARGET} hip::host)
 
 set_target_properties(_pyorigami PROPERTIES
     CXX_STANDARD 17                    # We can make this optional too if we want to support newer standards

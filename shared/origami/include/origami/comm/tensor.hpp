@@ -197,9 +197,11 @@ struct tensor_collective_prediction_t {
  * @param input_shape Per-rank input tensor shape.
  * @param dtype Element data type.
  * @param world_size Number of participating ranks (must be >= 1).
+ * @param system GPU + fabric hardware description (required; build one from a
+ *        device via system_from_device / system_from_hardware in
+ *        origami/comm/hardware_device.hpp, or from make_system).
  * @param dim Sharded axis (defaults to 0); negative values index from the end.
  * @param nchannels Channels/workgroups driving the collective (defaults to 32).
- * @param system GPU + fabric hardware description (defaults to MI300X_SYSTEM).
  * @param framework Caller framework for overhead accounting (defaults to "raw").
  * @param heur Tunable heuristic parameters (defaults to DEFAULT_HEURISTICS).
  * @return tensor_collective_prediction_t Prediction plus inputs and derived data.
@@ -210,9 +212,9 @@ tensor_collective_prediction_t predict_tensor_collective(
     const std::vector<std::size_t>& input_shape,
     data_type_t dtype,
     int world_size,
+    const system_t& system,
     int dim                    = 0,
     int nchannels              = 32,
-    const system_t& system     = MI300X_SYSTEM,
     std::string_view framework = "raw",
     const heuristics_t& heur   = DEFAULT_HEURISTICS);
 
@@ -226,9 +228,11 @@ tensor_collective_prediction_t predict_tensor_collective(
  * @param input_shape Per-rank input tensor shape.
  * @param dtype_name Element data type as a string alias (e.g. "bf16").
  * @param world_size Number of participating ranks (must be >= 1).
+ * @param system GPU + fabric hardware description (required; build one from a
+ *        device via system_from_device / system_from_hardware in
+ *        origami/comm/hardware_device.hpp, or from make_system).
  * @param dim Sharded axis (defaults to 0); negative values index from the end.
  * @param nchannels Channels/workgroups driving the collective (defaults to 32).
- * @param system GPU + fabric hardware description (defaults to MI300X_SYSTEM).
  * @param framework Caller framework for overhead accounting (defaults to "raw").
  * @param heur Tunable heuristic parameters (defaults to DEFAULT_HEURISTICS).
  * @return tensor_collective_prediction_t Prediction plus inputs and derived data.
@@ -240,9 +244,9 @@ tensor_collective_prediction_t predict_tensor_collective(
     const std::vector<std::size_t>& input_shape,
     std::string_view dtype_name,
     int world_size,
+    const system_t& system,
     int dim                    = 0,
     int nchannels              = 32,
-    const system_t& system     = MI300X_SYSTEM,
     std::string_view framework = "raw",
     const heuristics_t& heur   = DEFAULT_HEURISTICS);
 

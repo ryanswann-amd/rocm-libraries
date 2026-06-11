@@ -101,6 +101,11 @@ target_sources(
               $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/origami/comm/tensor.hpp>
 )
 
+# The HIP-dependent device bridge header is registered separately: it is not part
+# of the HIP-free header set above (it includes origami/hardware.hpp). It is
+# installed via the include/ directory glob below and consumed through
+# roc::origami-comm-device.
+
 # ── origami::comm compiled library ───────────────────────────────────────────
 # The non-constexpr bodies of the comm model are compiled once here, instead of
 # being re-parsed inline in every consumer. The declarations and all constexpr
@@ -135,6 +140,37 @@ target_sources(
             "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/tensor.cpp"
 )
 
+# ── origami::comm device bridge — origami::hardware_t → comm system_t ─────────
+# Unlike the rest of origami::comm, this small bridge IS HIP-dependent: it reads
+# live device topology (origami::hardware_t / hipDeviceProp_t) so a comm system_t
+# can describe the exact device about to run, including CPX partitions. It is a
+# separate target precisely so the core cost model (roc::origami-comm) stays
+# HIP-free and usable without a ROCm toolchain. Consumers that want device
+# introspection link roc::origami-comm-device in addition.
+if(ORIGAMI_BUILD_SHARED_LIBS OR (BUILD_SHARED_LIBS AND ORIGAMI_STANDALONE))
+    add_library(origami-comm-device SHARED)
+else()
+    add_library(origami-comm-device STATIC)
+endif()
+
+rocm_set_soversion(origami-comm-device "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
+
+add_library(roc::origami-comm-device ALIAS origami-comm-device)
+
+set_target_properties(origami-comm-device PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+target_compile_features(origami-comm-device PUBLIC cxx_std_17)
+target_link_libraries(origami-comm-device
+    PUBLIC roc::origami-comm-headers roc::origami hip::host
+)
+
+target_sources(
+    origami-comm-device
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/hardware_device.cpp"
+)
+
 target_sources(
     origami
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/gemm.cpp"
@@ -160,7 +196,8 @@ if(ORIGAMI_BUILD_TESTING OR BUILD_TESTING)
 endif()
 
 if(ORIGAMI_ENABLE_INSTALL OR ORIGAMI_STANDALONE)
-    rocm_install(TARGETS origami origami-headers origami-comm-headers origami-comm)
+    rocm_install(TARGETS origami origami-headers origami-comm-headers origami-comm
+                 origami-comm-device)
 
     rocm_export_targets(
         TARGETS
@@ -168,6 +205,7 @@ if(ORIGAMI_ENABLE_INSTALL OR ORIGAMI_STANDALONE)
         roc::origami-headers
         roc::origami-comm-headers
         roc::origami-comm
+        roc::origami-comm-device
         DEPENDS
         PACKAGE
         hip

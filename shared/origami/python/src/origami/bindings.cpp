@@ -8,6 +8,7 @@
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/vector.h>
+#include "origami/comm/hardware_device.hpp"
 #include "origami/comm/origami_comm.hpp"
 #include "origami/gemm.hpp"
 #include "origami/hardware.hpp"
@@ -482,7 +483,9 @@ NB_MODULE(origami, m) {
   // ── hardware_t: per-GPU compute/memory ceilings ──────────────────
   nanobind::class_<oc::hardware_t>(comm, "hardware_t", "Per-GPU compute and memory ceilings.")
       .def(nanobind::init<>())
-      .def_prop_ro("arch", [](const oc::hardware_t& h) { return std::string{h.arch}; })
+      .def_prop_ro(
+          "arch",
+          [](const oc::hardware_t& h) { return std::string{origami::arch_enum_to_name(h.arch)}; })
       .def_rw("num_cu", &oc::hardware_t::num_cu)
       .def_rw("num_xcd", &oc::hardware_t::num_xcd)
       .def_rw("cu_per_xcd", &oc::hardware_t::cu_per_xcd)
@@ -527,11 +530,64 @@ NB_MODULE(origami, m) {
       .def_rw("min_bytes_per_wg", &oc::heuristics_t::min_bytes_per_wg)
       .def_rw("assume_rank_symmetry", &oc::heuristics_t::assume_rank_symmetry);
 
-  // MI300X defaults. Bound as module attributes (copies): pass these straight
-  // into the predict functions, or mutate a copy for what-if studies.
-  comm.attr("MI300X")             = oc::MI300X;
-  comm.attr("MI300X_COMM")        = oc::MI300X_COMM;
-  comm.attr("MI300X_SYSTEM")      = oc::MI300X_SYSTEM;
+  // ── gpu_topology_t: live per-device shape ────────────────────────
+  nanobind::class_<oc::gpu_topology_t>(
+      comm, "gpu_topology_t", "Per-device GPU topology (CU/XCD counts, L2 capacity).")
+      .def(
+          "__init__",
+          [](oc::gpu_topology_t* self,
+             hardware_t::architecture_t arch,
+             std::size_t num_cu,
+             std::size_t num_xcd,
+             std::size_t cu_per_xcd,
+             std::size_t l2_capacity_bytes) {
+            new (self) oc::gpu_topology_t{arch, num_cu, num_xcd, cu_per_xcd, l2_capacity_bytes};
+          },
+          "arch"_a,
+          "num_cu"_a,
+          "num_xcd"_a,
+          "cu_per_xcd"_a,
+          "l2_capacity_bytes"_a)
+      .def_rw("arch", &oc::gpu_topology_t::arch)
+      .def_rw("num_cu", &oc::gpu_topology_t::num_cu)
+      .def_rw("num_xcd", &oc::gpu_topology_t::num_xcd)
+      .def_rw("cu_per_xcd", &oc::gpu_topology_t::cu_per_xcd)
+      .def_rw("l2_capacity_bytes", &oc::gpu_topology_t::l2_capacity_bytes);
+
+  // ── arch_ceilings_t: calibrated per-architecture ceilings ────────
+  // Opaque handle produced by get_arch_ceilings and consumed by make_system; the
+  // native-unit fields are an implementation detail callers do not edit.
+  nanobind::class_<oc::arch_ceilings_t>(
+      comm, "arch_ceilings_t", "Calibrated per-architecture comm ceilings (native units).");
+
+  comm.def("get_arch_ceilings",
+           &oc::get_arch_ceilings,
+           "arch"_a,
+           "Calibrated communication ceilings for an architecture (raises if uncalibrated).");
+
+  comm.def("make_system",
+           &oc::make_system,
+           "ceilings"_a,
+           "topology"_a,
+           "clock_ghz"_a,
+           "Fuse calibrated ceilings, a topology, and a clock into a system_t.");
+
+  // ── Live-device system factories (HIP-dependent) ─────────────────
+  comm.def("system_from_hardware",
+           &oc::system_from_hardware,
+           "hardware"_a,
+           "Build a comm system_t from an origami.hardware_t (same device, one topology).");
+
+  comm.def("system_from_device",
+           &oc::system_from_device,
+           "device_id"_a,
+           "Build a comm system_t by querying a live HIP device (picks up CPX partitioning).");
+
+  // Default heuristics, bound as a module attribute (copy): pass straight
+  // into the predict functions, or mutate a copy for what-if studies. There is
+  // deliberately no hardcoded MI300X system attribute — build a system_t for the
+  // device you are about to run on via system_from_device / system_from_hardware,
+  // or from make_system with an explicit topology.
   comm.attr("DEFAULT_HEURISTICS") = oc::DEFAULT_HEURISTICS;
 
   // ── tile_shape_t: a 2D tile with a contiguity bit ────────────────
@@ -643,7 +699,7 @@ NB_MODULE(origami, m) {
       "msg_bytes"_a,
       "world_size"_a,
       "nchannels"_a,
-      "system"_a    = oc::MI300X_SYSTEM,
+      "system"_a,
       "M"_a         = 0,
       "N"_a         = 0,
       "split_dim"_a = 0,
@@ -657,21 +713,21 @@ NB_MODULE(origami, m) {
          const std::vector<std::size_t>& input_shape,
          const std::string& dtype,
          int world_size,
+         const oc::system_t& system,
          int dim,
          int nchannels,
-         const oc::system_t& system,
          const std::string& framework,
          const oc::heuristics_t& heur) {
         return oc::predict_tensor_collective(
-            op, input_shape, dtype, world_size, dim, nchannels, system, framework, heur);
+            op, input_shape, dtype, world_size, system, dim, nchannels, framework, heur);
       },
       "op"_a,
       "input_shape"_a,
       "dtype"_a,
       "world_size"_a,
+      "system"_a,
       "dim"_a       = 0,
       "nchannels"_a = 32,
-      "system"_a    = oc::MI300X_SYSTEM,
       "framework"_a = "raw",
       "heur"_a      = oc::DEFAULT_HEURISTICS,
       "Predict a collective's latency (microseconds) from a per-rank tensor shape.");
@@ -687,7 +743,7 @@ NB_MODULE(origami, m) {
       },
       "problem"_a,
       "config"_a,
-      "system"_a = oc::MI300X_SYSTEM,
-      "heur"_a   = oc::DEFAULT_HEURISTICS,
+      "system"_a,
+      "heur"_a = oc::DEFAULT_HEURISTICS,
       "Predicted GPU cycles for the whole collective (max over ranks).");
 }

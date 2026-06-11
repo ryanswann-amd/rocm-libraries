@@ -25,6 +25,7 @@
  *******************************************************************************/
 
 #include "test_harness.hpp"
+#include "test_system.hpp"
 
 #include "origami/comm/hardware.hpp"
 

@@ -30,6 +30,7 @@
 // where the value is an exact integer reciprocal of an integer; 1e-12
 // otherwise to absorb last-bit reordering in the C++ constant-folder.
 #include "test_harness.hpp"
+#include "test_system.hpp"
 
 #include "origami/comm/hardware.hpp"
 #include "origami/comm/heuristics.hpp"

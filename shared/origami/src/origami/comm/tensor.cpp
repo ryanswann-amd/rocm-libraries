@@ -125,9 +125,9 @@ tensor_collective_prediction_t predict_tensor_collective(
     const std::vector<std::size_t>& input_shape,
     data_type_t dtype,
     int world_size,
+    const system_t& system,
     int dim,
     int nchannels,
-    const system_t& system,
     std::string_view framework,
     const heuristics_t& heur) {
   // Parse the op name to its enum once, here at the public boundary, so the rest
@@ -217,18 +217,18 @@ tensor_collective_prediction_t predict_tensor_collective(
     const std::vector<std::size_t>& input_shape,
     std::string_view dtype_name,
     int world_size,
+    const system_t& system,
     int dim,
     int nchannels,
-    const system_t& system,
     std::string_view framework,
     const heuristics_t& heur) {
   return predict_tensor_collective(op,
                                    input_shape,
                                    normalize_dtype(dtype_name),
                                    world_size,
+                                   system,
                                    dim,
                                    nchannels,
-                                   system,
                                    framework,
                                    heur);
 }

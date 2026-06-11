@@ -40,6 +40,7 @@
 // these expressions. The golden values are stored at full precision so
 // the gold IS the exact bit pattern the reference produces.
 #include "test_harness.hpp"
+#include "test_system.hpp"
 
 #include "origami/comm/hardware.hpp"
 #include "origami/comm/heuristics.hpp"
