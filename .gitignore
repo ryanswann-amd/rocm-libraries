@@ -1,0 +1,13 @@
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local agent / IDE state
+.claude/
+
+# Sibling subrepos (have their own .git, ignored from origami_comms perspective)
+wg_graphs/
+origami_comms_cpp/
+rocSCOPE/
+rocm-libraries/
