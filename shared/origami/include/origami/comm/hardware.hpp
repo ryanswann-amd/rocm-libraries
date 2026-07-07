@@ -53,6 +53,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string_view>
+#include <tuple>
 
 #include "origami/architecture.hpp"
 
@@ -497,13 +498,34 @@ struct arch_ceilings_t {
 };
 
 /**
+ * @brief HBM bandwidth-utilization polynomial for an architecture, in comm's
+ *        std::array form, sourced from the shared GEMM calibration.
+ *
+ * The BW-vs-active-CU polynomial is the one piece of comm's calibration GEMM
+ * already measures — origami::architecture_constants::mem_bw_per_wg_coefficients.
+ * Reading it from there instead of re-typing the numbers keeps a single source
+ * of truth (and picks up per-architecture curves GEMM has but comm had not, e.g.
+ * gfx950). Returned as std::array to match @ref hardware_t::mem_bw_coeffs;
+ * std::array copy-assignment is not reliably constexpr in C++17, so callers
+ * assigning into an existing array must copy element-wise.
+ *
+ * @param arch Architecture enum value.
+ * @return std::array<double, 3> {a, b, c} of fraction = a*N^2 + b*N + c.
+ */
+constexpr std::array<double, 3> mem_bw_coeffs_from_constants(architecture_t arch) {
+  const auto t = get_arch_constants(arch).mem_bw_per_wg_coefficients;
+  return {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+}
+
+/**
  * @brief Calibrated communication ceilings for an architecture, in native units.
  *
  * The communication analogue of origami::get_arch_constants. Only the
  * architectures origami has microbenchmarked for collectives appear; today that
  * is gfx942 (MI300X, CDNA3). The values are the per-link and aggregate rates and
  * latencies measured on that part, in GB/s and ns — @ref make_system applies the
- * clock conversion.
+ * clock conversion. The HBM BW-vs-active-CU polynomial is not re-typed here; it
+ * is pulled from the shared GEMM calibration via @ref mem_bw_coeffs_from_constants.
  *
  * @param arch Architecture enum value.
  * @return arch_ceilings_t Native-unit ceilings for @p arch.
@@ -528,7 +550,7 @@ constexpr arch_ceilings_t get_arch_ceilings(architecture_t arch) {
           /* waves_per_wg        */ 10,
           /* mall_capacity_bytes */ 256ULL * 1024ULL * 1024ULL,
           /* hbm_capacity_bytes  */ 192ULL * 1024ULL * 1024ULL * 1024ULL,
-          /* mem_bw_coeffs       */ {0.0, 0.015, 0.0},
+          /* mem_bw_coeffs       */ mem_bw_coeffs_from_constants(architecture_t::gfx942),
           /* cacheline_bytes     */ 64,
           /* l2_bw_per_cu_GBps   */ 83.6,
           /* mall_bw_GBps        */ 4730.0,
@@ -543,6 +565,32 @@ constexpr arch_ceilings_t get_arch_ceilings(architecture_t arch) {
           /* atomic_latency_ns   */ 100.0,
           /* launch_overhead_ns  */ 45000.0,
       };
+    case architecture_t::gfx950: {
+      // TODO(uncalibrated): MI350 series (CDNA4) placeholder — NOT microbenchmarked.
+      // Only the publicly known HBM capacity and peak bandwidth are updated; every
+      // other ceiling is carried over from gfx942 and MUST be re-measured before
+      // this is trusted for MI350 predictions. In particular the xGMI link rate,
+      // SDMA rates, MALL/L2 bandwidth, and all latencies differ on CDNA4. This
+      // mirrors how the GEMM model handles its own not-yet-calibrated
+      // architectures in get_arch_constants().
+      arch_ceilings_t c = get_arch_ceilings(architecture_t::gfx942);
+      // MI355X ships 288 GB HBM3E (public spec).
+      c.hbm_capacity_bytes = 288ULL * 1024ULL * 1024ULL * 1024ULL;
+      // ~8 TB/s peak HBM3E vs MI300X's ~5.3 TB/s: scale gfx942's calibrated
+      // sustained read/write aggregates by that peak ratio as a rough stand-in
+      // until MI350 sustained rates are measured.
+      c.hbm_read_GBps  = 4730.0 * (8.0 / 5.3);
+      c.hbm_write_GBps = 5140.0 * (8.0 / 5.3);
+      // Unlike the HBM/fabric ceilings above, the BW-vs-active-CU polynomial IS
+      // calibrated for gfx950 in the shared GEMM constants, so use the real
+      // gfx950 curve rather than the gfx942 one carried over above. Element-wise
+      // because std::array copy-assignment is not reliably constexpr in C++17.
+      const auto k       = mem_bw_coeffs_from_constants(architecture_t::gfx950);
+      c.mem_bw_coeffs[0] = k[0];
+      c.mem_bw_coeffs[1] = k[1];
+      c.mem_bw_coeffs[2] = k[2];
+      return c;
+    }
     default:
       throw std::invalid_argument(
           "origami::comm has no calibrated arch_ceilings_t for this architecture");

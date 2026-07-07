@@ -96,6 +96,44 @@ TEST(mi300x_l2_bw_per_cu_scaling) {
   CHECK_NEAR(MI300X.l2_bw_per_cu_scaled(1000), MI300X.l2_bw_per_cu, 1e-12);
 }
 
+// ─── arch_ceilings_t table ─────────────────────────────────────────
+TEST(gfx942_ceilings_are_native_units) {
+  // The table holds native units (GB/s, ns), pre-clock-conversion.
+  constexpr auto c = get_arch_ceilings(origami::architecture_t::gfx942);
+  static_assert(c.hbm_read_GBps == 4730.0);
+  static_assert(c.hbm_write_GBps == 5140.0);
+  static_assert(c.xgmi_latency_ns == 660.0);
+  static_assert(c.hbm_capacity_bytes == 192ULL * 1024ULL * 1024ULL * 1024ULL);
+  CHECK(true);  // static_assert above
+}
+
+TEST(gfx950_placeholder_is_wired_but_uncalibrated) {
+  // MI350 (gfx950) is a documented, uncalibrated placeholder: publicly known
+  // capacity/BW updated, everything else carried over from gfx942. This locks
+  // the wiring so the branch is not silently dropped; it is NOT a calibration.
+  constexpr auto mi350 = get_arch_ceilings(origami::architecture_t::gfx950);
+  constexpr auto mi300 = get_arch_ceilings(origami::architecture_t::gfx942);
+  static_assert(mi350.hbm_capacity_bytes == 288ULL * 1024ULL * 1024ULL * 1024ULL);
+  static_assert(mi350.hbm_read_GBps > mi300.hbm_read_GBps);  // scaled up from gfx942
+  static_assert(mi350.link_GBps == mi300.link_GBps);         // carried over (TODO)
+  static_assert(mi350.xgmi_latency_ns == mi300.xgmi_latency_ns);
+  // The BW-vs-active-CU polynomial is the one ceiling genuinely calibrated for
+  // gfx950 (from the shared GEMM constants), so it must NOT match gfx942's.
+  static_assert(mi350.mem_bw_coeffs[1] != mi300.mem_bw_coeffs[1]);
+  CHECK(true);  // static_assert above
+}
+
+// Comm's BW polynomial is sourced from the shared GEMM calibration rather than
+// re-typed, so the two must agree for every architecture comm calibrates.
+TEST(comm_bw_coeffs_match_gemm_constants) {
+  constexpr auto g942 = origami::get_arch_constants(origami::architecture_t::gfx942);
+  constexpr auto c942 = get_arch_ceilings(origami::architecture_t::gfx942);
+  static_assert(c942.mem_bw_coeffs[0] == std::get<0>(g942.mem_bw_per_wg_coefficients));
+  static_assert(c942.mem_bw_coeffs[1] == std::get<1>(g942.mem_bw_per_wg_coefficients));
+  static_assert(c942.mem_bw_coeffs[2] == std::get<2>(g942.mem_bw_per_wg_coefficients));
+  CHECK(true);  // static_assert above
+}
+
 // ─── comm_hardware_t MI300X_COMM ───────────────────────────────────
 TEST(mi300x_comm_atomic_and_launch) {
   // 100 ns × 2 GHz = 200 cycles.
