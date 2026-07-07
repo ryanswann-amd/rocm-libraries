@@ -56,6 +56,7 @@
 #include <string_view>
 #include <tuple>
 
+#include "origami/math.hpp"
 #include "origami/types.hpp"
 
 namespace origami::comm {
@@ -259,18 +260,24 @@ inline algorithm_t algorithm_from_name(std::string_view name) {
 
 // ─── ceil_div: ceil(a/b) for positive integers ─────
 /**
- * @brief Ceiling division ceil(a/b) for positive integers.
+ * @brief Ceiling division ceil(a/b) for non-negative integers.
+ *
+ * Thin wrapper over origami::math::safe_ceil_div (the shared, overflow-safe
+ * implementation used throughout the base GEMM model) that preserves comm's
+ * common-type return. Delegating keeps a single source of truth for the
+ * ceil-div logic and inherits its overflow / zero-denominator guards (b == 0
+ * yields 0 rather than undefined behaviour).
  *
  * @tparam A Numerator type.
  * @tparam B Denominator type.
  * @param a Numerator.
- * @param b Denominator (assumed non-zero and positive).
- * @return std::common_type_t<A, B> Smallest integer >= a / b.
+ * @param b Denominator.
+ * @return std::common_type_t<A, B> Smallest integer >= a / b (0 if b == 0).
  */
 template <typename A, typename B>
 constexpr auto ceil_div(A a, B b) noexcept -> std::common_type_t<A, B> {
   using U = std::common_type_t<A, B>;
-  return static_cast<U>((static_cast<U>(a) + static_cast<U>(b) - 1) / static_cast<U>(b));
+  return math::safe_ceil_div(static_cast<U>(a), static_cast<U>(b));
 }
 
 /**
