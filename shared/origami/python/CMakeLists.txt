@@ -54,7 +54,9 @@ else()
   )
 endif()
 
-nanobind_add_module(_pyorigami "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/bindings.cpp")
+nanobind_add_module(_pyorigami
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/bindings.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/bind_graphs.cpp")
 
 set_target_properties(_pyorigami PROPERTIES OUTPUT_NAME "origami")
 
@@ -81,8 +83,19 @@ if(TARGET roc::origami-comm-device)
 elseif(TARGET origami-comm-device)
     set(ORIGAMI_COMM_DEVICE_TARGET origami-comm-device)
 endif()
+# The graphs bindings need the compiled (hip-free) origami-graphs library. The
+# GEMM bridge is deliberately not linked here: it would make the extension
+# depend on the analytical GEMM model for a submodule most callers use without
+# it, and the arm is reachable from Python through cost_kind_t.custom anyway.
+set(ORIGAMI_GRAPHS_TARGET "")
+if(TARGET roc::origami-graphs)
+    set(ORIGAMI_GRAPHS_TARGET roc::origami-graphs)
+elseif(TARGET origami-graphs)
+    set(ORIGAMI_GRAPHS_TARGET origami-graphs)
+endif()
 target_link_libraries(_pyorigami PRIVATE ${ORIGAMI_TARGET} ${ORIGAMI_COMM_TARGET}
-                                         ${ORIGAMI_COMM_DEVICE_TARGET} hip::host)
+                                         ${ORIGAMI_COMM_DEVICE_TARGET}
+                                         ${ORIGAMI_GRAPHS_TARGET} hip::host)
 
 set_target_properties(_pyorigami PROPERTIES
     CXX_STANDARD 17                    # We can make this optional too if we want to support newer standards
@@ -218,6 +231,20 @@ if(ORIGAMI_BUILD_TESTING OR BUILD_TESTING)
     # Run comm (collective cost model) binding regression tests. These
     # correlate origami.comm against the same frozen golden CSVs the C++ comm
     # suite checks, proving the bindings introduce no numerical drift.
+    add_test(
+        NAME "Python: test_graphs_bindings"
+        COMMAND ${Python_EXECUTABLE} -m pytest tests/test_graphs.py -v
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    set_tests_properties(
+        "Python: test_graphs_bindings"
+        PROPERTIES
+            ENVIRONMENT
+            "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src:$ENV{PYTHONPATH}"
+            DEPENDS _pyorigami
+    )
+
     add_test(
         NAME "Python: test_comm_bindings"
         COMMAND ${Python_EXECUTABLE} -m pytest tests/test_comm.py -v

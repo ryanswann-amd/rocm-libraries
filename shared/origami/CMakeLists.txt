@@ -191,6 +191,114 @@ target_sources(
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/comm/hardware_device.cpp"
 )
 
+# ── origami::graphs (kirigami) — workgroup dependency graphs ─────────────────
+# Header-only INTERFACE library. Like origami::comm, it deliberately does NOT
+# link hip::host: a workgroup graph is a description of which parts of which
+# buffers a kernel touches, which is pure C++17 and needs no ROCm toolchain to
+# reason about. Only the GEMM cost arm is HIP-dependent, and that lives in the
+# separate origami-graphs-gemm bridge target.
+#
+# It links roc::origami-comm-headers because the comm cost arm prices a graph
+# node with compute_wg_tile_latency() — the graph layer is a consumer of the
+# collective cost model, never the other way round.
+add_library(origami-graphs-headers INTERFACE)
+add_library(roc::origami-graphs-headers ALIAS origami-graphs-headers)
+
+target_compile_features(origami-graphs-headers INTERFACE cxx_std_17)
+
+target_sources(origami-graphs-headers
+    INTERFACE
+    FILE_SET HEADERS
+    BASE_DIRS
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/analysis.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/core.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/cost.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/cost_runtime.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/free_graph.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/origami_graphs.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/ranking.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/runtime.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/symbolic.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/trace.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/types.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/wg_graph.hpp"
+)
+
+target_link_libraries(origami-graphs-headers INTERFACE roc::origami-comm-headers)
+
+target_include_directories(
+    origami-graphs-headers INTERFACE
+        $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+
+# ── origami::graphs compiled library ─────────────────────────────────────────
+# The symbolic algebra, the derivation, and the schedulers are ordinary
+# non-constexpr code, compiled once here rather than re-parsed by every
+# consumer. Pure C++17 and HIP-free, matching roc::origami-comm.
+add_library(origami-graphs ${ORIGAMI_LIBRARY_TYPE})
+
+rocm_set_soversion(origami-graphs "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
+
+add_library(roc::origami-graphs ALIAS origami-graphs)
+
+set_target_properties(origami-graphs PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+target_compile_features(origami-graphs PUBLIC cxx_std_17)
+target_link_libraries(origami-graphs PUBLIC roc::origami-graphs-headers roc::origami-comm)
+
+target_sources(
+    origami-graphs
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/analysis.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/core.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/cost.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/cost_runtime.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/free_graph.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/ranking.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/runtime.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/symbolic.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/trace.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/wg_graph.cpp"
+)
+
+# ── origami::graphs GEMM bridge — the one HIP-linked piece ───────────────────
+# Quarantine, not convenience. origami/gemm.hpp reaches origami/hardware.hpp,
+# which includes <hip/hip_runtime.h>, so the GEMM cost arm cannot live in
+# origami-graphs without making the whole graphs library need a ROCm toolchain.
+# Keeping it in its own target is what lets tests/graphs/run_standalone.sh build
+# everything else with a bare g++, and what lets a caller who never prices a
+# GEMM avoid the dependency entirely.
+add_library(origami-graphs-gemm ${ORIGAMI_LIBRARY_TYPE})
+
+rocm_set_soversion(origami-graphs-gemm "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}")
+
+add_library(roc::origami-graphs-gemm ALIAS origami-graphs-gemm)
+
+set_target_properties(origami-graphs-gemm PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
+target_compile_features(origami-graphs-gemm PUBLIC cxx_std_17)
+target_link_libraries(origami-graphs-gemm PUBLIC roc::origami-graphs roc::origami)
+
+# cost_gemm.hpp is installed directly rather than through a FILE_SET. It cannot
+# join origami-graphs-headers, whose whole promise is that every header in it
+# compiles without HIP, and a FILE_SET of its own collides with how rocm_install
+# builds the export set.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/origami/graphs/cost_gemm.hpp"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/origami/graphs"
+    COMPONENT devel
+)
+
+target_sources(
+    origami-graphs-gemm
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/graphs/cost_gemm.cpp"
+)
+
 target_sources(
     origami
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/origami/attention.cpp"
@@ -216,9 +324,10 @@ if(ORIGAMI_BUILD_TESTING OR BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
-rocm_install(TARGETS origami origami-comm origami-comm-device)
+rocm_install(TARGETS origami origami-comm origami-comm-device origami-graphs
+             origami-graphs-gemm)
 
-install(TARGETS origami-headers origami-comm-headers
+install(TARGETS origami-headers origami-comm-headers origami-graphs-headers
     EXPORT origami-targets
     FILE_SET HEADERS
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
@@ -232,6 +341,9 @@ rocm_export_targets(
     roc::origami-comm-headers
     roc::origami-comm
     roc::origami-comm-device
+    roc::origami-graphs-headers
+    roc::origami-graphs
+    roc::origami-graphs-gemm
     DEPENDS
     PACKAGE
     hip

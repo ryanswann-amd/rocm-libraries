@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/function.h>
 #include <nanobind/stl/map.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
@@ -19,6 +21,9 @@
 
 using hardware_t = origami::hardware_t;
 using namespace nanobind::literals;
+
+/// Defined in bind_graphs.cpp.
+void bind_graphs(nanobind::module_& m);
 
 NB_MODULE(origami, m) {
   nanobind::enum_<hardware_t::architecture_t>(m, "architecture_t")
@@ -349,7 +354,8 @@ NB_MODULE(origami, m) {
   m.def("compute_number_matrix_instructions",
         &origami::gemm::compute_number_matrix_instructions,
         "Compute the number of matrix instructions required");
-  m.def("arithmetic_intensity", &origami::gemm::arithmetic_intensity, "Compute arithmetic intensity");
+  m.def(
+      "arithmetic_intensity", &origami::gemm::arithmetic_intensity, "Compute arithmetic intensity");
   m.def("emulated_tf32_arithmetic_intensity",
         &origami::gemm::emulated_tf32_arithmetic_intensity,
         "Compute emulated TF32 arithmetic intensity");
@@ -813,4 +819,9 @@ NB_MODULE(origami, m) {
       "system"_a,
       "heur"_a = oc::DEFAULT_HEURISTICS,
       "Predicted GPU cycles for the whole collective (max over ranks).");
+
+  // Workgroup dependency graphs — exposed as ``origami.graphs``. Bound in its
+  // own translation unit; the surface is large enough that inlining it here,
+  // the way comm is, would bury everything else.
+  bind_graphs(m);
 }

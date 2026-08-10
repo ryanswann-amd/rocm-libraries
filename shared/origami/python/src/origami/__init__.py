@@ -91,6 +91,9 @@ try:
 
     # Communication (collective) cost model — exposed as ``origami.comm``.
     from .origami import comm
+
+    # Workgroup dependency graphs — exposed as ``origami.graphs``.
+    from .origami import graphs
 except ImportError as e:
     raise ImportError(
         f"Failed to import origami extension module: {e}. "
@@ -179,7 +182,12 @@ __all__ = [
     "att_compute_l2_hit_rate_global",
     # Communication (collective) cost model
     "comm",
+    "graphs",
+    "prebuilt",
 ]
+
+# Graphs for kernels worth naming — pure Python over origami.graphs.
+from . import prebuilt  # noqa: E402
 
 try:
     # Import the python selectors if possible (requires torch)

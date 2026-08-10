@@ -1,0 +1,41 @@
+--- reference
++++ port
+@@ -159,7 +159,7 @@
+ split_named/lanes=1/asap (pipelined) makespan=12
+ split_named/lanes=1/asap (pipelined) steps=0: a#0 | 1: a#1 | 2: a#2 | 3: a#3 | 4: z#0 | 5: z#1 | 6: z#2 | 7: z#3 | 8: b#0 | 9: b#1 | 10: b#2 | 11: b#3
+ split_named/lanes=1/depth-first makespan=12
+-split_named/lanes=1/depth-first steps=0: a#0 | 1: b#0 | 2: z#0 | 3: a#1 | 4: b#1 | 5: z#1 | 6: a#2 | 7: b#2 | 8: z#2 | 9: a#3 | 10: b#3 | 11: z#3
++split_named/lanes=1/depth-first steps=0: a#0 | 1: z#0 | 2: b#0 | 3: a#1 | 4: z#1 | 5: b#1 | 6: a#2 | 7: z#2 | 8: b#2 | 9: a#3 | 10: z#3 | 11: b#3
+ split_named/lanes=2/breadth-first makespan=6
+ split_named/lanes=2/breadth-first steps=0: a#0 a#1 | 1: a#2 a#3 | 2: z#0 z#1 | 3: z#2 z#3 | 4: b#0 b#1 | 5: b#2 b#3
+ split_named/lanes=2/asap (pipelined) makespan=6
+@@ -171,7 +171,7 @@
+ split_named/lanes=3/asap (pipelined) makespan=4
+ split_named/lanes=3/asap (pipelined) steps=0: a#0 a#1 a#2 | 1: a#3 z#0 z#1 | 2: z#2 z#3 b#0 | 3: b#1 b#2 b#3
+ split_named/lanes=3/depth-first makespan=5
+-split_named/lanes=3/depth-first steps=0: a#0 a#1 a#2 | 1: z#0 b#0 b#1 | 2: z#1 z#2 b#2 | 3: a#3 | 4: z#3 b#3
++split_named/lanes=3/depth-first steps=0: a#0 a#1 a#2 | 1: z#0 z#1 b#0 | 2: z#2 b#1 b#2 | 3: a#3 | 4: z#3 b#3
+ 
+ two_sources/lanes=None/breadth-first makespan=3
+ two_sources/lanes=None/breadth-first steps=0: z#0 z#1 z#2 z#3 | 1: b#0 b#1 b#2 b#3 | 2: c#0 c#1 c#2 c#3
+@@ -184,17 +184,17 @@
+ two_sources/lanes=1/asap (pipelined) makespan=12
+ two_sources/lanes=1/asap (pipelined) steps=0: z#0 | 1: z#1 | 2: z#2 | 3: z#3 | 4: b#0 | 5: b#1 | 6: b#2 | 7: b#3 | 8: c#0 | 9: c#1 | 10: c#2 | 11: c#3
+ two_sources/lanes=1/depth-first makespan=12
+-two_sources/lanes=1/depth-first steps=0: b#0 | 1: b#1 | 2: b#2 | 3: b#3 | 4: z#0 | 5: c#0 | 6: z#1 | 7: c#1 | 8: z#2 | 9: c#2 | 10: z#3 | 11: c#3
++two_sources/lanes=1/depth-first steps=0: z#0 | 1: z#1 | 2: z#2 | 3: z#3 | 4: b#0 | 5: c#0 | 6: b#1 | 7: c#1 | 8: b#2 | 9: c#2 | 10: b#3 | 11: c#3
+ two_sources/lanes=2/breadth-first makespan=6
+ two_sources/lanes=2/breadth-first steps=0: z#0 z#1 | 1: z#2 z#3 | 2: b#0 b#1 | 3: b#2 b#3 | 4: c#0 c#1 | 5: c#2 c#3
+ two_sources/lanes=2/asap (pipelined) makespan=6
+ two_sources/lanes=2/asap (pipelined) steps=0: z#0 z#1 | 1: z#2 z#3 | 2: b#0 b#1 | 3: b#2 b#3 | 4: c#0 c#1 | 5: c#2 c#3
+ two_sources/lanes=2/depth-first makespan=6
+-two_sources/lanes=2/depth-first steps=0: b#0 b#1 | 1: b#2 b#3 | 2: z#0 z#1 | 3: c#0 c#1 | 4: z#2 z#3 | 5: c#2 c#3
++two_sources/lanes=2/depth-first steps=0: z#0 z#1 | 1: z#2 z#3 | 2: b#0 b#1 | 3: c#0 c#1 | 4: b#2 b#3 | 5: c#2 c#3
+ two_sources/lanes=3/breadth-first makespan=6
+ two_sources/lanes=3/breadth-first steps=0: z#0 z#1 z#2 | 1: z#3 | 2: b#0 b#1 b#2 | 3: b#3 | 4: c#0 c#1 c#2 | 5: c#3
+ two_sources/lanes=3/asap (pipelined) makespan=4
+ two_sources/lanes=3/asap (pipelined) steps=0: z#0 z#1 z#2 | 1: z#3 b#0 b#1 | 2: b#2 b#3 c#0 | 3: c#1 c#2 c#3
+ two_sources/lanes=3/depth-first makespan=5
+-two_sources/lanes=3/depth-first steps=0: b#0 b#1 b#2 | 1: z#0 z#1 b#3 | 2: z#2 c#0 c#1 | 3: z#3 c#2 | 4: c#3
++two_sources/lanes=3/depth-first steps=0: z#0 z#1 z#2 | 1: z#3 b#0 b#1 | 2: b#2 c#0 c#1 | 3: b#3 c#2 | 4: c#3
+ 
