@@ -39,6 +39,14 @@
  * The reference makes the same split: its `CombinedCostModel` is a dictionary
  * from operation name to spec, not a field on the operation.
  *
+ * Every arm answers in cycles, per `cost_model_t`. The comm arm always
+ * was cycle-native internally; the roofline arm is not — except for its
+ * compute roof, which is expressed per cycle and needs no clock at all (a
+ * compute-bound tile costs the same cycles regardless of DVFS). The HBM and
+ * link roofs are continuous rates in their own clock domains, so
+ * `roofline_hardware_t::compute_clock_ghz` is what scales *those* into
+ * cycles.
+ *
  * Three arms are available here, and a fourth is deliberately absent:
  *
  *   - `cost_kind_t::roofline` is the coarse first cut — the largest of the
@@ -49,7 +57,8 @@
  *   - `cost_kind_t::comm` calls `origami::comm::compute_wg_tile_latency`, the
  *     calibrated model, and is the one to use for anything that touches the
  *     fabric. It is genuinely contention-aware: `active_cus` reaches the model,
- *     so `event_driven_runtime_t` gets real numbers rather than a constant.
+ *     so a schedule run with `simulate_options_t::reprice_on_dispatch` gets real
+ *     numbers rather than a constant.
  *   - `cost_kind_t::custom` takes a function, for a measured trace or a model
  *     that does not exist yet.
  *   - `cost_kind_t::gemm` calls origami's analytical GEMM model, which is
@@ -73,7 +82,7 @@
 #include "origami/comm/latency.hpp"
 #include "origami/comm/primitives.hpp"
 #include "origami/comm/types.hpp"
-#include "origami/graphs/cost_runtime.hpp"
+#include "origami/graphs/cost_model.hpp"
 #include "origami/graphs/wg_graph.hpp"
 
 namespace origami::graphs {
@@ -117,12 +126,58 @@ cost_kind_t cost_kind_from_name(const std::string& name);
  *
  * Defaults are MI300X-ish: bf16 matrix peak, on-package HBM3, the xGMI egress
  * ceiling, and a ring-step latency.
+ *
+ * `hbm_bw`, `link_bw` and `link_latency` are stated the way a data sheet
+ * states them — bytes/s, bytes/s, seconds — because HBM and xGMI run in
+ * their own clock domains: a bandwidth-bound tile really does take fewer
+ * engine cycles at a lower engine clock, so `compute_clock_ghz` is what
+ * converts those two roofs' answer, which is in seconds, into cycles.
+ *
+ * The compute roof is different. Matrix throughput is not an independent
+ * rate that happens to relate to the clock — it *is* CUs x FLOP/cycle/CU x
+ * clock — so `peak_flops_per_cycle` states it clock-free (FLOP/cycle,
+ * aggregate across the part) and the compute roof, in cycles, is simply
+ * `flops / peak_flops_per_cycle`: the frequency cancels exactly, and a
+ * compute-bound tile costs the same cycles no matter what `compute_clock_ghz`
+ * is set to. `peak_flops()` recovers the spec-sheet FLOP/s a caller may want
+ * to report, at whatever `compute_clock_ghz` currently is; it is a derived
+ * accessor rather than a field precisely so the two can never be set to
+ * disagree.
  */
 struct roofline_hardware_t {
-  double peak_flops   = 1.307e15;  ///< FLOP/s
-  double hbm_bw       = 5.3e12;    ///< bytes/s to local memory
-  double link_bw      = 50e9;      ///< bytes/s off-GPU
-  double link_latency = 2.0e-6;    ///< fixed per-hop latency, seconds
+  /**
+   * Aggregate matrix throughput, FLOP/cycle across the whole part — e.g.
+   * MI300X's 304 CUs x 2048 bf16 FLOP/cycle/CU. Clock-free by construction:
+   * multiplying by a clock and later dividing it back out would be a no-op at
+   * best, and a caller who changes only one of the two would otherwise get a
+   * silently wrong answer (see roofline_cycles's compute roof).
+   */
+  double peak_flops_per_cycle = 304.0 * 2048.0;
+  double hbm_bw               = 5.3e12;  ///< bytes/s to local memory
+  double link_bw              = 50e9;    ///< bytes/s off-GPU
+  double link_latency         = 2.0e-6;  ///< fixed per-hop latency, seconds
+
+  /**
+   * Engine clock, GHz. Scales the HBM and link roofs from seconds into
+   * cycles, because those two are continuous rates in their own clock
+   * domains. Does **not** touch the compute roof: `peak_flops_per_cycle`
+   * already is the per-cycle ceiling, so this field has no bearing on how
+   * many cycles a compute-bound tile costs. Must be positive.
+   */
+  double compute_clock_ghz = 2.1;
+
+  /**
+   * @brief Spec-sheet compute peak, FLOP/s, at `compute_clock_ghz`.
+   *
+   * The data-sheet-friendly form of `peak_flops_per_cycle`, for a caller who
+   * wants to report or compare against a FLOP/s figure. Always
+   * `peak_flops_per_cycle * compute_clock_ghz * 1e9`; not an independently
+   * settable field, so it cannot drift out of sync with the clock-free
+   * ceiling the compute roof actually uses.
+   *
+   * @throws std::invalid_argument If compute_clock_ghz is not positive.
+   */
+  double peak_flops() const;
 
   /** @brief Arithmetic intensity, in FLOP/byte, at the compute/HBM ridge. */
   double ridge_intensity() const;
@@ -167,13 +222,18 @@ struct roofline_spec_t {
 };
 
 /**
- * @brief Roofline duration for one workgroup, in seconds.
+ * @brief Roofline duration for one workgroup, in cycles.
+ *
+ * The largest of the three roofs, each already in cycles: compute via
+ * `hardware.peak_flops_per_cycle` directly, HBM and link scaled from seconds
+ * by `hardware.compute_clock_ghz`.
  *
  * @param spec Per-workgroup work.
- * @param hardware Machine rates.
- * @return double The largest of the three roofs.
+ * @param hardware Machine rates and clock.
+ * @return double The largest of the three roofs, in cycles.
+ * @throws std::invalid_argument If hardware.compute_clock_ghz is not positive.
  */
-double roofline_seconds(const roofline_spec_t& spec, const roofline_hardware_t& hardware);
+double roofline_cycles(const roofline_spec_t& spec, const roofline_hardware_t& hardware);
 
 /**
  * @brief Which roof a workgroup sits on.
@@ -181,6 +241,9 @@ double roofline_seconds(const roofline_spec_t& spec, const roofline_hardware_t& 
  * @param spec Per-workgroup work.
  * @param hardware Machine rates.
  * @return const char* "compute", "hbm", "link", or "none" for no work at all.
+ * @throws std::invalid_argument If hardware.compute_clock_ghz is not positive
+ *         and spec has any work (an all-zero spec short-circuits to "none"
+ *         before the clock is touched).
  */
 const char* roofline_bound(const roofline_spec_t& spec, const roofline_hardware_t& hardware);
 
@@ -230,23 +293,27 @@ comm::wg_tile_latency_breakdown_t comm_breakdown(
     const comm::heuristics_t& heur = comm::DEFAULT_HEURISTICS);
 
 /**
- * @brief Duration of one workgroup tile, in seconds.
+ * @brief Duration of one workgroup tile, in cycles.
+ *
+ * `origami::comm::compute_wg_tile_latency` already answers in cycles, so this
+ * is `comm_breakdown(...).T_total_cycles` and nothing more: no clock enters
+ * the comm arm at all, unlike the roofline arm.
  *
  * @param spec Communication workload.
  * @param system Machine description.
  * @param active_cus Concurrently active compute units; the workgroup count when unset.
  * @param heur Tunable heuristics.
- * @return double Seconds, converted from cycles at the machine's clock.
+ * @return double Cycles.
  */
-double comm_seconds(const comm_spec_t& spec,
-                    const comm::system_t& system,
-                    std::optional<int> active_cus  = std::nullopt,
-                    const comm::heuristics_t& heur = comm::DEFAULT_HEURISTICS);
+double comm_cycles(const comm_spec_t& spec,
+                   const comm::system_t& system,
+                   std::optional<int> active_cus  = std::nullopt,
+                   const comm::heuristics_t& heur = comm::DEFAULT_HEURISTICS);
 
 // ─── custom arm ───────────────────────────────────────────────────────
 
 /**
- * @brief A caller-supplied duration, in seconds.
+ * @brief A caller-supplied duration, in cycles.
  *
  * Receives the contention level so a measured model can use it; a function that
  * ignores the second argument is a constant-cost operation.
@@ -280,7 +347,7 @@ class op_cost_t {
    * somewhere deep in a scheduler.
    *
    * @param kind Arm to report.
-   * @param fn Duration in seconds, given a node and a contention level.
+   * @param fn Duration in cycles, given a node and a contention level.
    * @return op_cost_t The entry.
    * @throws std::invalid_argument If the function is empty.
    */
@@ -310,7 +377,17 @@ class op_cost_t {
 
 // ─── cost_table_t ─────────────────────────────────────────────────────
 
-/** @brief Machine description and defaults shared by every entry in a table. */
+/**
+ * @brief Machine description and defaults shared by every entry in a table.
+ *
+ * @note When a table uses both the comm and roofline arms, `comm_system`'s
+ * clock (`comm_system->gpu.clock_ghz`) must match
+ * `roofline_hardware.compute_clock_ghz`. Both arms answer in cycles, and a
+ * table's scheduler adds and maxes them across arms unconditionally, so cycles
+ * measured against two different clocks would silently mix into one number
+ * that is correct at neither. A table that uses only one arm does not need the
+ * unused arm's clock to agree.
+ */
 struct cost_settings_t {
   roofline_hardware_t roofline_hardware;  ///< rates for the roofline arm
 
@@ -319,17 +396,20 @@ struct cost_settings_t {
    * library stopped shipping a hardcoded MI300X, because the same part exposes
    * different CU and XCD counts under partitioning, so the machine has to come
    * from the caller. Build one with `origami::comm::make_system`, or from the
-   * device with `origami::comm::system_from_device`.
+   * device with `origami::comm::system_from_device`. If the same table also
+   * uses roofline-priced entries, build it at
+   * `roofline_hardware.compute_clock_ghz` or set that field to the comm
+   * system's clock.
    */
   std::optional<comm::system_t> comm_system;
 
   comm::heuristics_t heuristics = comm::DEFAULT_HEURISTICS;  ///< tunables for the comm arm
 
-  /** Duration for an operation with no entry. Zero, as the reference does. */
-  double default_seconds = 0.0;
+  /** Duration, in cycles, for an operation with no entry. Zero, as the reference does. */
+  double default_cycles = 0.0;
 
-  /** Hop latency; free when unset, which is what both reference models say. */
-  std::function<double(const edge_t&)> edge_cost;
+  /** Hop latency, in cycles; free when unset, which is what both reference models say. */
+  std::function<double(const edge_t&)> edge_cycles;
 };
 
 /**
@@ -341,8 +421,8 @@ struct cost_settings_t {
  *
  * Contention reaches the arms that can use it. The comm arm forwards
  * `active_cus` to the latency model, which is what makes
- * `event_driven_runtime_t` more than a relabelling of `roofline_runtime_t`; the
- * roofline arm ignores it, being a static model.
+ * `runtime_kind_t::event_driven` more than a relabelling of
+ * `runtime_kind_t::roofline`; the roofline arm ignores it, being a static model.
  */
 class cost_table_t : public cost_model_t {
  public:
@@ -361,6 +441,9 @@ class cost_table_t : public cost_model_t {
    * @param cost How to price it.
    * @return cost_table_t& This table, for chaining.
    * @throws std::out_of_range If the graph has no such operation.
+   * @throws std::invalid_argument If this entry would make the table use both
+   *         the comm and roofline arms while their clocks disagree (see
+   *         `cost_settings_t`).
    */
   cost_table_t& set(const std::string& op_name, op_cost_t cost);
 
@@ -380,14 +463,14 @@ class cost_table_t : public cost_model_t {
    */
   std::optional<cost_kind_t> kind_of(int op) const;
 
-  /** @brief Duration in seconds, at each arm's own default contention level. */
-  double node_cost(const wg_node_t& node) const override;
+  /** @brief Duration in cycles, at each arm's own default contention level. */
+  double node_cycles(const wg_node_t& node) const override;
 
-  /** @brief Duration in seconds under a stated contention level. */
-  double node_cost_at(const wg_node_t& node, int active_cus) const override;
+  /** @brief Duration in cycles under a stated contention level. */
+  double node_cycles_at(const wg_node_t& node, int active_cus) const override;
 
-  /** @brief Hop latency in seconds; free unless `cost_settings_t::edge_cost` is set. */
-  double edge_cost(const edge_t& edge) const override;
+  /** @brief Hop latency in cycles; free unless `cost_settings_t::edge_cycles` is set. */
+  double edge_cycles(const edge_t& edge) const override;
 
  private:
   double price(int op, const wg_node_t& node, std::optional<int> active_cus) const;

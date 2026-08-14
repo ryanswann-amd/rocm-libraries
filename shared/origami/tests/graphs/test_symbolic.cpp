@@ -343,16 +343,16 @@ TEST(streamed_clips_the_final_iteration) {
   CHECK(total == 10);
 }
 
-TEST(callable_set_wraps_arbitrary_indices) {
-  const index_fn_t f = callable_set([](int wg, int, const env_t&) {
+TEST(index_offsets_wraps_arbitrary_indices) {
+  const index_fn_t f = index_offsets([](int wg, int, const eval_context_t&) {
     return std::vector<index_t>{wg * 10, wg * 10 + 5, wg * 10};
   });
-  const env_t env;
+  const eval_context_t ctx;
 
   // Duplicates collapse.
-  CHECK(size(f(2, 0, env)) == 2);
-  CHECK(to_vector(f(2, 0, env))[0] == 20);
-  CHECK(to_vector(f(2, 0, env))[1] == 25);
+  CHECK(size(f(2, 0, ctx)) == 2);
+  CHECK(to_vector(f(2, 0, ctx))[0] == 20);
+  CHECK(to_vector(f(2, 0, ctx))[1] == 25);
 }
 
 ORIGAMI_TEST_MAIN()

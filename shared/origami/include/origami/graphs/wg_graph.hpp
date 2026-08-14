@@ -161,7 +161,8 @@ class wg_graph_t {
    * This is the one thing about a graph that may change after construction. The
    * structure is still immutable — attaching a price does not move an edge.
    *
-   * @param cost Model to attach; shared so a caller need not outlive the graph.
+   * @param cost Model to attach, pricing in cycles; shared so a caller need not
+   *        outlive the graph.
    */
   void set_cost(std::shared_ptr<const cost_model_t> cost) { cost_ = std::move(cost); }
 

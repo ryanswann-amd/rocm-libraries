@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dump reference schedules for the C++ integer-timestep runtimes to match.
+"""Dump reference integer-timestep schedules for the C++ port to match.
 
 Runs breadth-first, ASAP and depth-first over a range of graphs and lane counts
 and prints the makespan plus the full timestep-by-timestep dispatch. The

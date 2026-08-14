@@ -107,30 +107,27 @@ struct scalar_expr_t::node_t {
   expr_kind_t kind = expr_kind_t::constant;
   index_t value    = 0;
   std::string name;
+  scope_t scope = scope_t::problem;
   std::shared_ptr<const node_t> left;
   std::shared_ptr<const node_t> right;
 
-  index_t eval(const env_t& env) const {
+  index_t eval(const eval_context_t& ctx) const {
     switch (kind) {
       case expr_kind_t::constant: return value;
-      case expr_kind_t::symbol: {
-        const auto it = env.find(name);
-        if (it == env.end()) {
-          throw std::out_of_range("dimension '" + name +
-                                  "' is unbound; bind it in the graph's env_t");
-        }
-        return it->second;
-      }
+      case expr_kind_t::symbol: return ctx.index_at(scope, name);
       default: break;
     }
-    const index_t a = left->eval(env);
-    const index_t b = right->eval(env);
+    const index_t a = left->eval(ctx);
+    const index_t b = right->eval(ctx);
     switch (kind) {
       case expr_kind_t::add: return a + b;
       case expr_kind_t::sub: return a - b;
       case expr_kind_t::mul: return a * b;
       case expr_kind_t::floordiv: return floor_div(a, b);
       case expr_kind_t::ceildiv: return ceil_div_int(a, b);
+      case expr_kind_t::mod: return euclid_mod(a, b);
+      case expr_kind_t::minimum: return std::min(a, b);
+      case expr_kind_t::maximum: return std::max(a, b);
       default: throw std::logic_error("scalar_expr_t: unhandled expression kind");
     }
   }
@@ -144,6 +141,15 @@ struct scalar_expr_t::node_t {
     if (right) right->collect_symbols(out);
   }
 
+  void collect_scoped(std::set<scoped_symbol_t>& out) const {
+    if (kind == expr_kind_t::symbol) {
+      out.insert(scoped_symbol_t{scope, name});
+      return;
+    }
+    if (left) left->collect_scoped(out);
+    if (right) right->collect_scoped(out);
+  }
+
   std::string str() const {
     switch (kind) {
       case expr_kind_t::constant: return std::to_string(value);
@@ -153,6 +159,9 @@ struct scalar_expr_t::node_t {
       case expr_kind_t::mul: return "(" + left->str() + " * " + right->str() + ")";
       case expr_kind_t::floordiv: return "(" + left->str() + " // " + right->str() + ")";
       case expr_kind_t::ceildiv: return "ceil_div(" + left->str() + ", " + right->str() + ")";
+      case expr_kind_t::mod: return "(" + left->str() + " % " + right->str() + ")";
+      case expr_kind_t::minimum: return "min(" + left->str() + ", " + right->str() + ")";
+      case expr_kind_t::maximum: return "max(" + left->str() + ", " + right->str() + ")";
     }
     throw std::logic_error("scalar_expr_t: unhandled expression kind");
   }
@@ -169,10 +178,14 @@ scalar_expr_t::scalar_expr_t(index_t value) {
 
 scalar_expr_t::scalar_expr_t(std::shared_ptr<const node_t> node) : node_(std::move(node)) {}
 
-index_t scalar_expr_t::eval(const env_t& env) const { return node_->eval(env); }
+index_t scalar_expr_t::eval(const env_t& env) const {
+  return node_->eval(eval_context_t::from_env(env));
+}
+
+index_t scalar_expr_t::eval(const eval_context_t& ctx) const { return node_->eval(ctx); }
 
 index_t scalar_expr_t::eval() const {
-  static const env_t kEmpty;
+  static const eval_context_t kEmpty;
   return node_->eval(kEmpty);
 }
 
@@ -182,18 +195,38 @@ std::set<std::string> scalar_expr_t::free_symbols() const {
   return out;
 }
 
+std::set<scoped_symbol_t> scalar_expr_t::scoped_symbols() const {
+  std::set<scoped_symbol_t> out;
+  node_->collect_scoped(out);
+  return out;
+}
+
 bool scalar_expr_t::is_constant() const { return free_symbols().empty(); }
 
 std::string scalar_expr_t::str() const { return node_->str(); }
 
 expr_kind_t scalar_expr_t::kind() const { return node_->kind; }
 
-scalar_expr_t sym(std::string name) {
-  auto n  = std::make_shared<scalar_expr_t::node_t>();
-  n->kind = expr_kind_t::symbol;
-  n->name = std::move(name);
+scalar_expr_t scoped_sym(scope_t scope, std::string name) {
+  if (scope != scope_t::problem && scope != scope_t::config) {
+    throw std::invalid_argument(std::string{"an index expression cannot reference the "} +
+                                std::string{scope_name(scope)} +
+                                " scope; it is available only in cost expressions");
+  }
+  auto n   = std::make_shared<scalar_expr_t::node_t>();
+  n->kind  = expr_kind_t::symbol;
+  n->name  = std::move(name);
+  n->scope = scope;
   return scalar_expr_t{std::move(n)};
 }
+
+scalar_expr_t problem_sym(std::string name) {
+  return scoped_sym(scope_t::problem, std::move(name));
+}
+
+scalar_expr_t config_sym(std::string name) { return scoped_sym(scope_t::config, std::move(name)); }
+
+scalar_expr_t sym(std::string name) { return scoped_sym(scope_t::problem, std::move(name)); }
 
 scalar_expr_t make_binary(expr_kind_t kind, const scalar_expr_t& lhs, const scalar_expr_t& rhs) {
   auto n   = std::make_shared<scalar_expr_t::node_t>();
@@ -221,6 +254,22 @@ scalar_expr_t operator/(const scalar_expr_t& lhs, const scalar_expr_t& rhs) {
 
 scalar_expr_t ceil_div(const scalar_expr_t& a, const scalar_expr_t& b) {
   return make_binary(expr_kind_t::ceildiv, a, b);
+}
+
+scalar_expr_t floor_div(const scalar_expr_t& a, const scalar_expr_t& b) {
+  return make_binary(expr_kind_t::floordiv, a, b);
+}
+
+scalar_expr_t mod(const scalar_expr_t& a, const scalar_expr_t& b) {
+  return make_binary(expr_kind_t::mod, a, b);
+}
+
+scalar_expr_t minimum(const scalar_expr_t& a, const scalar_expr_t& b) {
+  return make_binary(expr_kind_t::minimum, a, b);
+}
+
+scalar_expr_t maximum(const scalar_expr_t& a, const scalar_expr_t& b) {
+  return make_binary(expr_kind_t::maximum, a, b);
 }
 
 scalar_expr_t grid_2d(const scalar_expr_t& rows_dim,
@@ -290,22 +339,27 @@ bool range_contains(const range_t& r, index_t v) {
 index_set_t intersect_ranges(const range_t& a, const range_t& b) {
   if (a.count == 0 || b.count == 0) return empty_index_set();
 
+  // Step 1: any shared value must lie in the window both progressions span.
   const index_t lo = std::max(a.start, b.start);
   const index_t hi = std::min(a.last(), b.last());
   if (lo > hi) return empty_index_set();
 
+  // Step 2: the starts must agree modulo gcd(steps), or the two never align.
   const index_t da = a.step;
   const index_t db = b.step;
   const index_t g  = std::gcd(da, db);
-  if (euclid_mod(b.start - a.start, g) != 0) return empty_index_set();  // never align
+  if (euclid_mod(b.start - a.start, g) != 0) return empty_index_set();
 
+  // Step 3: solve a.start + da*k == b.start (mod db) for the first shared value
+  // x0, inverting da/g modulo db/g, which is legal because they are coprime.
   const index_t lcm  = da / g * db;
   const index_t diff = floor_div(b.start - a.start, g);
   const index_t m    = db / g;
-  // (da/g) * p == 1 (mod db/g), so x0 satisfies both congruences.
-  const index_t p  = egcd(da / g, m).x;
-  const index_t x0 = a.start + da * mul_mod(diff, p, m);
+  const index_t p    = egcd(da / g, m).x;
+  const index_t x0   = a.start + da * mul_mod(diff, p, m);
 
+  // Step 4: shared values recur every lcm, so lift x0 into the window and count
+  // how many fit.
   const index_t start = x0 + ceil_div_int(lo - x0, lcm) * lcm;
   if (start > hi) return empty_index_set();
   return index_set_t{range_t{start, lcm, floor_div(hi - start, lcm) + 1}};
@@ -374,41 +428,42 @@ index_t intersect_size(const index_set_t& a, const index_set_t& b) {
 // ─── pattern builders ─────────────────────────────────────────────────
 
 index_fn_t contiguous(scalar_expr_t block, scalar_expr_t base) {
-  return [block, base](int wg, int, const env_t& env) -> index_set_t {
-    const index_t b = block.eval(env);
-    return index_set_t{range_t{base.eval(env) + static_cast<index_t>(wg) * b, 1, b}};
+  return [block, base](int wg, int, const eval_context_t& ctx) -> index_set_t {
+    const index_t b = block.eval(ctx);
+    return index_set_t{range_t{base.eval(ctx) + static_cast<index_t>(wg) * b, 1, b}};
   };
 }
 
 index_fn_t strided(scalar_expr_t block, scalar_expr_t stride, scalar_expr_t base) {
-  return [block, stride, base](int wg, int, const env_t& env) -> index_set_t {
-    const index_t start = base.eval(env) + static_cast<index_t>(wg) * stride.eval(env);
-    return index_set_t{range_t{start, 1, block.eval(env)}};
+  return [block, stride, base](int wg, int, const eval_context_t& ctx) -> index_set_t {
+    const index_t start = base.eval(ctx) + static_cast<index_t>(wg) * stride.eval(ctx);
+    return index_set_t{range_t{start, 1, block.eval(ctx)}};
   };
 }
 
 index_fn_t rows(scalar_expr_t block_rows, scalar_expr_t row_len, scalar_expr_t base) {
-  return [block_rows, row_len, base](int wg, int, const env_t& env) -> index_set_t {
-    const index_t span = block_rows.eval(env) * row_len.eval(env);
-    return index_set_t{range_t{base.eval(env) + static_cast<index_t>(wg) * span, 1, span}};
+  return [block_rows, row_len, base](int wg, int, const eval_context_t& ctx) -> index_set_t {
+    const index_t span = block_rows.eval(ctx) * row_len.eval(ctx);
+    return index_set_t{range_t{base.eval(ctx) + static_cast<index_t>(wg) * span, 1, span}};
   };
 }
 
 index_fn_t streamed(scalar_expr_t block, scalar_expr_t num_iters, scalar_expr_t base) {
-  return [block, num_iters, base](int wg, int it, const env_t& env) -> index_set_t {
-    const index_t b      = block.eval(env);
-    const index_t k      = std::max<index_t>(num_iters.eval(env), 1);
+  return [block, num_iters, base](int wg, int it, const eval_context_t& ctx) -> index_set_t {
+    const index_t b      = block.eval(ctx);
+    const index_t k      = std::max<index_t>(num_iters.eval(ctx), 1);
     const index_t chunk  = ceil_div_int(b, k);
-    const index_t base_i = base.eval(env) + static_cast<index_t>(wg) * b;
+    const index_t base_i = base.eval(ctx) + static_cast<index_t>(wg) * b;
     const index_t start  = base_i + static_cast<index_t>(it) * chunk;
     const index_t count  = std::max<index_t>(0, std::min(chunk, base_i + b - start));
     return index_set_t{range_t{start, 1, count}};
   };
 }
 
-index_fn_t callable_set(std::function<std::vector<index_t>(int wg, int it, const env_t& env)> fn) {
-  return [fn = std::move(fn)](int wg, int it, const env_t& env) -> index_set_t {
-    return index_set_t{finite_set_t::of(fn(wg, it, env))};
+index_fn_t index_offsets(
+    std::function<std::vector<index_t>(int wg, int it, const eval_context_t& ctx)> fn) {
+  return [fn = std::move(fn)](int wg, int it, const eval_context_t& ctx) -> index_set_t {
+    return index_set_t{finite_set_t::of(fn(wg, it, ctx))};
   };
 }
 

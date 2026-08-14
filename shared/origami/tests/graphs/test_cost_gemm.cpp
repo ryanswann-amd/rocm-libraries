@@ -36,8 +36,9 @@
 #include <vector>
 
 #include "origami/graphs/core.hpp"
-#include "origami/graphs/cost_runtime.hpp"
 #include "origami/graphs/ranking.hpp"
+#include "origami/graphs/runtime.hpp"
+#include "origami/graphs/simulate.hpp"
 #include "test_harness.hpp"
 
 using namespace origami::graphs;
@@ -81,28 +82,29 @@ graph_t gemm_then_reduce() {
 
 }  // namespace
 
-TEST(a_gemm_tile_is_priced_in_seconds) {
+TEST(a_gemm_tile_is_priced_in_cycles) {
   const origami::hardware_t hw = nominal_mi300x();
-  const double seconds         = gemm_seconds(square_gemm(4096, 4096, 4096), hw);
+  const double cycles          = gemm_cycles(square_gemm(4096, 4096, 4096), hw);
 
-  CHECK(seconds > 0.0);
-  // A single macro-tile is microseconds at most; anything near a second would
-  // mean the cycles-to-seconds conversion went the wrong way.
-  CHECK(seconds < 1e-3);
+  CHECK(cycles > 0.0);
+  // The old expectation was seconds < 1e-3 at this fixture's 2.1 GHz clock, so
+  // the equivalent bound on cycles is that same threshold times the clock:
+  // 1e-3 s * 2.1e9 Hz = 2.1e6 cycles.
+  CHECK(cycles < 2.1e6);
 }
 
 TEST(more_contraction_costs_more) {
   const origami::hardware_t hw = nominal_mi300x();
-  CHECK(gemm_seconds(square_gemm(4096, 4096, 8192), hw) >
-        gemm_seconds(square_gemm(4096, 4096, 1024), hw));
+  CHECK(gemm_cycles(square_gemm(4096, 4096, 8192), hw) >
+        gemm_cycles(square_gemm(4096, 4096, 1024), hw));
 }
 
 TEST(a_bigger_tile_takes_longer_per_workgroup) {
   // Per *workgroup*, not per GEMM: a 256-wide tile does four times the work of a
   // 128-wide one, and there are correspondingly fewer of them.
   const origami::hardware_t hw = nominal_mi300x();
-  CHECK(gemm_seconds(square_gemm(4096, 4096, 4096, 256), hw) >
-        gemm_seconds(square_gemm(4096, 4096, 4096, 128), hw));
+  CHECK(gemm_cycles(square_gemm(4096, 4096, 4096, 256), hw) >
+        gemm_cycles(square_gemm(4096, 4096, 4096, 128), hw));
 }
 
 TEST(an_invalid_config_is_rejected) {
@@ -112,20 +114,21 @@ TEST(an_invalid_config_is_rejected) {
 
   bool threw = false;
   try {
-    gemm_seconds(spec, hw);
+    gemm_cycles(spec, hw);
   } catch (const std::invalid_argument&) { threw = true; }
   CHECK(threw);
 }
 
-TEST(a_stopped_clock_is_rejected_rather_than_dividing_by_zero) {
-  origami::hardware_t hw = nominal_mi300x();
-  hw.compute_clock_ghz   = 0.0;
+TEST(gemm_pricing_does_not_depend_on_the_clock) {
+  // The same tile on two parts differing only in clock must cost the same
+  // cycles; that is the whole point of not dividing here.
+  origami::hardware_t slow = nominal_mi300x();
+  origami::hardware_t fast = slow;
+  slow.compute_clock_ghz   = 1.0;
+  fast.compute_clock_ghz   = 2.5;
 
-  bool threw = false;
-  try {
-    gemm_seconds(square_gemm(4096, 4096, 4096), hw);
-  } catch (const std::invalid_argument&) { threw = true; }
-  CHECK(threw);
+  const gemm_spec_t spec = square_gemm(4096, 4096, 4096);
+  CHECK_NEAR(gemm_cycles(spec, slow), gemm_cycles(spec, fast), 1e-9);
 }
 
 TEST(the_bridge_reports_the_gemm_arm) {
@@ -139,7 +142,10 @@ TEST(the_bridge_reports_the_gemm_arm) {
   // reason op_cost_t::tagged exists.
   CHECK(table.kind_of(0) == cost_kind_t::gemm);
   CHECK(cost_kind_name(*table.kind_of(0)) == std::string("gemm"));
-  CHECK(table.node_cost(wg_node_t{0, 0, 0}) == gemm_seconds(square_gemm(4096, 4096, 4096), hw));
+  // gemm_cost's function now returns exactly what gemm_cycles computes, with
+  // nothing left to convert, so the table reports the same number under its
+  // cycle-labelled method.
+  CHECK(table.node_cycles(wg_node_t{0, 0, 0}) == gemm_cycles(square_gemm(4096, 4096, 4096), hw));
 }
 
 TEST(gemm_pricing_ignores_instantaneous_contention) {
@@ -154,7 +160,7 @@ TEST(gemm_pricing_ignores_instantaneous_contention) {
   table.set("gemm", gemm_cost(square_gemm(4096, 4096, 4096), hw));
 
   const wg_node_t tile{0, 0, 0};
-  CHECK(table.node_cost_at(tile, 1) == table.node_cost_at(tile, 304));
+  CHECK(table.node_cycles_at(tile, 1) == table.node_cycles_at(tile, 304));
 }
 
 TEST(active_cus_is_a_property_of_the_launch) {
@@ -164,10 +170,20 @@ TEST(active_cus_is_a_property_of_the_launch) {
   few.active_cus   = 8;
   gemm_spec_t many = square_gemm(4096, 4096, 4096);
   many.active_cus  = 304;
+  // active_cus left unset: per gemm_spec_t's doc, this defaults to the
+  // hardware's full complement, which is nominal_mi300x()'s 304 CUs — the
+  // same number `many` sets explicitly. If the override were deleted, `few`
+  // would fall back to this too, and it would read identically to `many`.
+  const gemm_spec_t unset = square_gemm(4096, 4096, 4096);
 
   // Fewer concurrent CUs means less pressure on shared bandwidth, so a tile
   // scheduled into a quiet machine is predicted to be no slower.
-  CHECK(gemm_seconds(few, hw) <= gemm_seconds(many, hw));
+  CHECK(gemm_cycles(few, hw) <= gemm_cycles(many, hw));
+  // Pin that the override is actually read rather than silently ignored: `few`
+  // must differ from what an unset spec (equivalently, `many`) produces, or
+  // deleting `gemm_spec_t::active_cus` entirely would leave the check above
+  // passing on equality.
+  CHECK(gemm_cycles(few, hw) != gemm_cycles(unset, hw));
 }
 
 TEST(the_bridge_drives_a_schedule_and_a_ranking) {
@@ -178,9 +194,12 @@ TEST(the_bridge_drives_a_schedule_and_a_ranking) {
   table.set("gemm", gemm_cost(square_gemm(4096, 4096, 4096), hw));
   table.set("all_reduce", op_cost_t::from_roofline(roofline_spec_t::comm_step(1 << 20, 2.0, 2.0)));
 
-  cost_runtime_options_t opts;
-  opts.lanes              = 8;
-  const cost_schedule_t s = roofline_runtime_t(table, opts).schedule(g);
+  // A GEMM table now feeds simulate() and predict_latency directly: both take
+  // the same cycle-valued interface cost_table_t implements, so there is
+  // nothing to bridge and no unit to relabel on the way.
+  simulate_options_t opts;
+  opts.lanes         = 8;
+  const schedule_t s = simulate(g, asap_runtime_t{}, table, opts);
   CHECK(s.order.size() == 12);
   CHECK(s.makespan() > 0.0);
 
@@ -188,6 +207,12 @@ TEST(the_bridge_drives_a_schedule_and_a_ranking) {
   config.runtime = runtime_kind_t::roofline;
   config.lanes   = 8;
   CHECK(predict_latency(g, config, &table) == s.makespan());
+
+  // The makespan is a cycle count, so the bridge's promise — that a GEMM's
+  // price does not depend on a clock — reaches all the way to the schedule; a
+  // caller wanting seconds names the clock here and nowhere earlier.
+  const fixed_clock_t clock(hw.compute_clock_ghz);
+  CHECK_NEAR(to_seconds(s, clock).makespan(), s.makespan() / (hw.compute_clock_ghz * 1e9), 1e-12);
 }
 
 ORIGAMI_TEST_MAIN()

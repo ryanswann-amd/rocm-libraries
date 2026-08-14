@@ -2,22 +2,44 @@
 # Diff C++ schedules against the Python wg_graphs reference, node for node.
 #
 # Two suites:
-#   runtime       the integer-timestep runtimes; every line names each node and
-#                 the timestep it was dispatched in
-#   cost_runtime  the continuous-time runtimes; every line names each node's
-#                 start, duration and lane to six decimal places
+#   runtime  the three flat-priced policies (breadth-first, asap, depth-first)
+#            under a uniform per-workgroup cost; every line names each node and
+#            the cycle it was dispatched in
+#   priced   the same simulate() scheduler with real per-node costs; every line
+#            names each node's start, duration and lane to six decimal places
 #
-# The continuous-time dumper prices nodes with the library's own roofline arm,
-# so that suite validates the shipped cost model against the reference's cost.py
+# The priced dumper takes its numbers from the library's own roofline arm, so
+# that suite validates the shipped cost model against the reference's cost.py
 # rather than a copy of it. Both build without HIP, CMake or Catch2. Comparing whole dumps rather than
 # transcribing expectations by hand means a single node moving is caught, and the
 # failure is a readable diff rather than one assertion.
 #
 # Differences are expected only where expected_diff_<suite>.txt records them. At
-# the time of writing that is five depth-first lines: the reference orders
-# depth-first successors by operation *name* where it means operator order, and
-# the port does not reproduce that. See the note on depth_first_rank in
-# runtime.hpp. The continuous-time suite is expected to agree exactly.
+# the time of writing the runtime suite has 33 known divergent lines: 27
+# depth-first and 6 ASAP, with breadth-first still agreeing exactly. Depth-first
+# differs for two reasons. The older one is that the reference orders
+# depth-first successors by operation *name* where it means operator declaration
+# order, and the port deliberately uses declaration order instead. The newer one
+# is that depth-first is now rank-dominant over its topological DFS rank, so it
+# really dives down producer-consumer chains instead of following readiness; ten
+# recorded depth-first lines now differ in makespan, not only in dispatch order.
+# ASAP differs because it now uses simulate()'s event-driven queue: the Python
+# reference recomputes every ready node each tick and sorts by canonical rank
+# alone, while simulate() keeps one priority queue keyed by (ready, rank), so an
+# earlier-ready node can beat a lower-ranked node that becomes ready later. These
+# ASAP differences are new from routing ASAP through that long-standing
+# event-driven path; they are makespan-neutral dispatch-order differences, and
+# removing them would require a simulate() design change rather than a policy
+# tweak.
+#
+# The priced suite is expected to agree exactly, and does: its 90 lines were
+# produced by the seconds-era runtimes before those were deleted and are now
+# produced by simulate() with the same three policies, so the port agrees with
+# the reference on real durations as well as on dispatch order. Note the ASAP
+# divergences above do not appear here even though the priced suite's roofline
+# and event configurations are ASAP: those divergences come from the reference's
+# *integer-timestep* runtimes recomputing the ready set each tick, and its
+# priced runtimes use the same (ready, rank) queue simulate() does.
 #
 # XcdRuntime lives only on the wg-graphs-figures-update branch, so PYTHONPATH
 # must point at a checkout of it:
@@ -56,7 +78,7 @@ status=0
 mapfile -t graph_sources < <(
     find "$root/src/origami/graphs" -name '*.cpp' ! -name 'cost_gemm.cpp' | sort)
 
-for suite in runtime cost_runtime; do
+for suite in runtime priced; do
     g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
         -I "$root/include" -I "$out/stub" \
         "${graph_sources[@]}" \

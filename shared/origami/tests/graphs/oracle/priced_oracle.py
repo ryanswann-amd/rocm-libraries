@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Dump reference continuous-time schedules for the C++ port to match.
+"""Dump reference cost-model-priced schedules for the C++ port to match.
 
 Runs the roofline, event-driven and XCD runtimes over a GEMM-plus-collective
 graph and prints, for every atom, its start, duration and lane. Those three
-numbers are the whole output of a continuous-time runtime, so comparing them
-node by node leaves nowhere for a discrepancy to hide.
+numbers are the whole output of a priced schedule, so comparing them node by
+node leaves nowhere for a discrepancy to hide.
 
 The cost model is the reference ``Roofline`` over MI300X parameters, which the
 C++ dumper reimplements arithmetic-for-arithmetic. Both sides are IEEE doubles
-doing the same operations in the same order, so the printed values are expected
-to agree to the last digit shown.
+doing the same operations, so the printed values are expected to agree well
+beyond the six decimals shown. The reference computes seconds throughout while
+the port computes cycles and converts once at the end, which is a difference in
+where a clock is applied rather than in what is computed.
 
 ``XcdRuntime`` lives only on the wg-graphs-figures-update branch, so point
 PYTHONPATH at a checkout of it:
-    PYTHONPATH=/path/to/wg_graphs_figures python3 cost_runtime_oracle.py
+    PYTHONPATH=/path/to/wg_graphs_figures python3 priced_oracle.py
 """
 
 from wg_graphs.core import Allocation, Graph, Operation, Read, Write

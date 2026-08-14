@@ -41,10 +41,11 @@ def fan_in():
     return G.graph_t([a, b], name="fan_in")
 
 
-def flat_cost(graph, seconds=1.0):
+def flat_cost(graph, cycles=1.0):
+    """The same number of cycles for every atom, so lane count alone decides."""
     table = G.cost_table_t(graph)
     for op in range(graph.num_operations()):
-        table.set(graph.op_name(op), G.op_cost_t.from_custom(lambda node, active: seconds))
+        table.set(graph.op_name(op), G.op_cost_t.from_custom(lambda node, active: cycles))
     return table
 
 
@@ -107,30 +108,45 @@ def test_critical_path_takes_a_python_cost_function(fan_in):
     assert path.makespan == pytest.approx(3.0)  # a costs 1, b costs 2
 
 
-# --- integer runtimes ---------------------------------------------------
+# --- scheduling policies over simulate() ---------------------------------
 
 
-def test_the_three_integer_runtimes_are_reachable(fan_in):
-    for runtime in (G.breadth_first_runtime_t, G.asap_runtime_t, G.depth_first_runtime_t):
-        s = runtime(lanes=2).schedule(fan_in)
+def _simulate(graph, runtime, lanes=None):
+    options = G.simulate_options_t()
+    options.lanes = lanes
+    return G.simulate(graph, runtime, G.unit_cost_t(), options)
+
+
+def test_the_three_cycle_policies_are_reachable(fan_in):
+    for runtime_cls in (G.breadth_first_runtime_t, G.asap_runtime_t, G.depth_first_runtime_t):
+        s = _simulate(fan_in, runtime_cls(), lanes=2)
         assert len(s.order) == 6
         assert s.makespan() > 0
         assert "makespan" in s.summary()
 
 
-def test_more_lanes_never_lengthen_an_integer_schedule(fan_in):
+def test_more_lanes_never_lengthen_a_cycle_schedule(fan_in):
     previous = 10**9
     for lanes in (1, 2, 4, 8):
-        now = G.asap_runtime_t(lanes=lanes).schedule(fan_in).makespan()
+        now = _simulate(fan_in, G.asap_runtime_t(), lanes=lanes).makespan()
         assert now <= previous
         previous = now
 
 
 def test_no_overlap_is_never_faster_than_producer_greedy(fan_in):
-    assert (
-        G.breadth_first_runtime_t(lanes=2).schedule(fan_in).makespan()
-        >= G.asap_runtime_t(lanes=2).schedule(fan_in).makespan()
-    )
+    assert _simulate(fan_in, G.breadth_first_runtime_t(), lanes=2).makespan() >= _simulate(
+        fan_in, G.asap_runtime_t(), lanes=2
+    ).makespan()
+
+
+def test_xcd_dispatches_in_launch_order_from_python():
+    g = G.free_graph_t("two_ops")
+    g.add_op("a", 4, 1)
+    options = G.simulate_options_t()
+    options.lanes = 4
+    s = G.simulate(g, G.xcd_runtime_t(2, 2), G.unit_cost_t(), options)
+    # Launch indices 0..3 alternate dies: lanes 0, 2, 1, 3.
+    assert [s.lane(G.wg_node_t(0, wg)) for wg in range(4)] == [0, 2, 1, 3]
 
 
 # --- cost ---------------------------------------------------------------
@@ -140,7 +156,7 @@ def test_the_roofline_arm_picks_the_binding_roof():
     tile = G.roofline_spec_t.gemm_tile(128, 128, 4096)
     step = G.roofline_spec_t.comm_step(1 << 20, fan=2.0)
 
-    assert G.roofline_seconds(tile) > 0
+    assert G.roofline_cycles(tile) > 0
     assert G.roofline_bound(tile) == "hbm"  # deep K with no reuse modelled
     assert G.roofline_bound(step) == "link"
     assert G.roofline_bound(G.roofline_spec_t()) == "none"
@@ -153,19 +169,19 @@ def test_a_cost_table_dispatches_per_operation(fan_in):
 
     assert table.kind_of(0) == G.cost_kind_t.roofline
     assert table.kind_of(1) == G.cost_kind_t.custom
-    assert table.node_cost(G.wg_node_t(0, 0)) > 0
+    assert table.node_cycles(G.wg_node_t(0, 0)) > 0
 
     # The custom arm receives the contention level, so a Python callable can
     # model it the same way a C++ one does.
-    assert table.node_cost_at(G.wg_node_t(1, 0), 4) == pytest.approx(4e-6)
+    assert table.node_cycles_at(G.wg_node_t(1, 0), 4) == pytest.approx(4e-6)
 
 
 def test_an_unpriced_operation_falls_back_to_the_default(fan_in):
-    assert G.cost_table_t(fan_in).node_cost(G.wg_node_t(0, 0)) == 0.0
+    assert G.cost_table_t(fan_in).node_cycles(G.wg_node_t(0, 0)) == 0.0
 
     settings = G.cost_settings_t()
-    settings.default_seconds = 2e-6
-    assert G.cost_table_t(fan_in, settings).node_cost(G.wg_node_t(0, 0)) == pytest.approx(2e-6)
+    settings.default_cycles = 2e-6
+    assert G.cost_table_t(fan_in, settings).node_cycles(G.wg_node_t(0, 0)) == pytest.approx(2e-6)
 
 
 def test_a_misspelled_operation_name_raises(fan_in):
@@ -186,8 +202,11 @@ def test_the_comm_arm_reaches_the_calibrated_model(fan_in):
         cu_per_xcd=38,
         l2_capacity_bytes=4 * 1024 * 1024,
     )
+    # Built at 2.1 GHz to agree with roofline_hardware_t's default
+    # compute_clock_ghz: cost_table_t rejects a cost_settings_t whose
+    # comm_system and roofline_hardware disagree on clock.
     system = comm.make_system(
-        comm.get_arch_ceilings(origami.architecture_t.gfx942), topology, 2.0
+        comm.get_arch_ceilings(origami.architecture_t.gfx942), topology, 2.1
     )
 
     spec = G.comm_spec_t(
@@ -197,16 +216,16 @@ def test_the_comm_arm_reaches_the_calibrated_model(fan_in):
         bw_per_wg=8.0,
         primitive=comm.primitive_t.all_gather,
     )
-    assert G.comm_seconds(spec, system) > 0
+    assert G.comm_cycles(spec, system) > 0
     # Contention only bites once the machine is genuinely crowded.
-    assert G.comm_seconds(spec, system, 304) > G.comm_seconds(spec, system, 1)
+    assert G.comm_cycles(spec, system, 304) > G.comm_cycles(spec, system, 1)
 
     settings = G.cost_settings_t()
     settings.comm_system = system
     table = G.cost_table_t(fan_in, settings)
     table.set("b", G.op_cost_t.from_comm(spec))
     assert table.kind_of(1) == G.cost_kind_t.comm
-    assert table.node_cost(G.wg_node_t(1, 0)) > 0
+    assert table.node_cycles(G.wg_node_t(1, 0)) > 0
 
 
 def test_an_unknown_comm_primitive_raises():
@@ -214,35 +233,85 @@ def test_an_unknown_comm_primitive_raises():
         G.comm_spec_t(work_graph=["teleport"], wg_tile_bytes=1024)
 
 
-# --- continuous runtimes ------------------------------------------------
+def test_a_table_rejects_mismatched_clocks(fan_in):
+    comm = getattr(origami, "comm", None)
+    if comm is None:
+        pytest.skip("origami built without the comm submodule")
+    topology = comm.gpu_topology_t(
+        arch=origami.architecture_t.gfx942,
+        num_cu=304,
+        num_xcd=8,
+        cu_per_xcd=38,
+        l2_capacity_bytes=4 * 1024 * 1024,
+    )
+    # 2.0 GHz disagrees with roofline_hardware_t's default 2.1 GHz.
+    system = comm.make_system(comm.get_arch_ceilings(origami.architecture_t.gfx942), topology, 2.0)
+    spec = G.comm_spec_t(
+        work_graph=["load", "store", "push"],
+        wg_tile_bytes=1 << 16,
+        num_wgs=8,
+        bw_per_wg=8.0,
+        primitive=comm.primitive_t.all_gather,
+    )
+
+    settings = G.cost_settings_t()
+    settings.comm_system = system
+    with pytest.raises(ValueError) as excinfo:
+        table = G.cost_table_t(fan_in, settings)
+        table.set("a", G.op_cost_t.from_roofline(G.roofline_spec_t.gemm_tile(128, 128, 4096)))
+        table.set("b", G.op_cost_t.from_comm(spec))
+    message = str(excinfo.value)
+    assert "2.000000" in message
+    assert "2.100000" in message
+
+    table = G.cost_table_t(fan_in, settings)
+    table.set("b", G.op_cost_t.from_comm(spec))
+    assert table.node_cycles(G.wg_node_t(1, 0)) > 0
+
+    settings.roofline_hardware.compute_clock_ghz = 2.0
+    table = G.cost_table_t(fan_in, settings)  # now agree; must not raise
+    table.set("a", G.op_cost_t.from_roofline(G.roofline_spec_t.gemm_tile(128, 128, 4096)))
+    table.set("b", G.op_cost_t.from_comm(spec))
 
 
-def test_the_three_continuous_runtimes_are_reachable(fan_in):
+# --- priced schedules ---------------------------------------------------
+
+
+def test_a_priced_schedule_reports_real_per_node_costs(fan_in):
     table = flat_cost(fan_in, 2.0)
-    options = G.cost_runtime_options_t()
+    options = G.simulate_options_t()
     options.lanes = 3
-    options.scale = 1.0
 
-    for s in (
-        G.roofline_runtime_t(table, options).schedule(fan_in),
-        G.event_driven_runtime_t(table, options).schedule(fan_in),
-        G.xcd_runtime_t(table, G.xcd_options_t()).schedule(fan_in),
-    ):
+    plain = G.simulate(fan_in, G.asap_runtime_t(), table, options)
+
+    # The one thing event-driven adds over roofline: the same policy, with each
+    # node re-priced against the lanes busy when it dispatches.
+    options.reprice_on_dispatch = True
+    repriced = G.simulate(fan_in, G.asap_runtime_t(), table, options)
+
+    for s in (plain, repriced):
         assert len(s.order) == 6
         assert s.makespan() > 0
         assert 0.0 < s.utilization() <= 1.0
         for n in s.order:
             assert s.finish(n) == pytest.approx(s.start(n) + s.duration(n))
+            assert s.duration(n) == pytest.approx(2.0)
 
 
 def test_a_lane_pool_partitions_the_machine(fan_in):
     table = flat_cost(fan_in, 2.0)
-    options = G.cost_runtime_options_t()
+    options = G.simulate_options_t()
     options.lanes = 4
-    options.scale = 1.0
-    options.lane_pool = {"a": [0, 1], "b": [2, 3]}
 
-    s = G.roofline_runtime_t(table, options).schedule(fan_in)
+    # A pool is a placement rather than a policy, so it composes with any
+    # issuing order: here ASAP's, wrapped by the library's own adapter that
+    # swaps the placement and forwards everything else.
+    pooled = G.runtime_with_placement_t(
+        G.asap_runtime_t(), G.pooled_placement_t({"a": [0, 1], "b": [2, 3]}, fan_in, 4)
+    )
+    s = G.simulate(fan_in, pooled, table, options)
+    # name() forwards from the base policy -- only the placement changed.
+    assert s.runtime == "asap (pipelined)"
     for n in s.order:
         assert s.lane(n) <= 1 if n.op == 0 else s.lane(n) >= 2
 
@@ -258,56 +327,90 @@ def test_serialising_iterations_exposes_a_pipeline():
     g = G.graph_t([p, c], name="streamed")
 
     table = flat_cost(g, 1.0)
-    loose = G.cost_runtime_options_t()
-    loose.scale = 1.0
-    tight = G.cost_runtime_options_t()
-    tight.scale = 1.0
+    loose = G.simulate_options_t()
+    tight = G.simulate_options_t()
     tight.serialize_wg_iters = True
 
     # Nothing in the graph says a workgroup runs its own iterations in sequence.
-    assert G.roofline_runtime_t(table, loose).schedule(g).makespan() == pytest.approx(2.0)
-    assert G.roofline_runtime_t(table, tight).schedule(g).makespan() == pytest.approx(5.0)
+    assert G.simulate(g, G.asap_runtime_t(), table, loose).makespan() == pytest.approx(2.0)
+    assert G.simulate(g, G.asap_runtime_t(), table, tight).makespan() == pytest.approx(5.0)
+
+
+def test_seconds_are_a_boundary_not_a_model(fan_in):
+    """The one place a *schedule's* cycles become a duration, and why it is only here."""
+    table = flat_cost(fan_in, 2.0)
+    options = G.simulate_options_t()
+    options.lanes = 4
+    cycles = G.simulate(fan_in, G.asap_runtime_t(), table, options)
+
+    # The schedule is in cycles; naming a clock is a separate, later decision,
+    # and naming a different one does not re-schedule anything.
+    slow = G.to_seconds(cycles, G.fixed_clock_t(1.0))
+    fast = G.to_seconds(cycles, G.fixed_clock_t(2.0))
+    assert slow.makespan() == pytest.approx(cycles.makespan() / 1e9)
+    assert fast.makespan() == pytest.approx(slow.makespan() / 2.0)
+
+    micro = G.to_seconds(cycles, G.fixed_clock_t(1.0), 1e6, "us")
+    assert micro.units == "us"
+    assert micro.makespan() == pytest.approx(slow.makespan() * 1e6)
+    assert micro.order == cycles.order
+    for n in micro.order:
+        assert micro.lane(n) == cycles.lane(n)
+        assert micro.finish(n) == pytest.approx(micro.start(n) + micro.duration(n))
 
 
 # --- extending the model from Python ------------------------------------
 
 
 class PyCost(G.cost_model_t):
-    """A cost model written in Python: seconds per operation, free hops."""
+    """A cost model written in Python: cycles per operation, free hops."""
 
     def __init__(self, per_op):
         super().__init__()
         self.per_op = per_op
 
-    def node_cost(self, node):
+    def node_cycles(self, node):
         return self.per_op[node.op]
 
-    def edge_cost(self, edge):
+    def edge_cycles(self, edge):
         return 0.0
 
 
-class SerialRuntime(G.cost_runtime_t):
+class OneLane(G.placement_t):
+    """A lane rule written in Python: everything on lane zero.
+
+    Stands in for Iris's layout kernel, which holds a workgroup on one lane for
+    the whole launch — not how any shipped placement chooses.
+    """
+
+    def name(self):
+        return "one-lane"
+
+    def choose(self, ctx):
+        return 0
+
+
+class SerialRuntime(G.runtime_t):
     """A scheduling policy written in Python: one lane, topological order.
 
     Deliberately not one of the shipped policies, so the numbers it produces
-    could not have come from anywhere else.
+    could not have come from anywhere else. Note how little there is to it now:
+    simulate() owns the clock and the ready set, so a policy is a rank and a
+    lane rule rather than a scheduler.
     """
+
+    def __init__(self):
+        super().__init__()
+        self._placement = OneLane()
 
     def name(self):
         return "serial"
 
-    def schedule(self, graph):
-        s = G.cost_schedule_t()
-        s.runtime = self.name()
-        s.lanes = 1
-        s.units = "us"
-        cost = graph.cost()
-        t = 0.0
-        for node in G.topological_order(graph):
-            d = cost.node_cost(node) if cost is not None else 1.0
-            s.place(node, t, d, 0)
-            t += d
-        return s
+    def priority(self, graph):
+        return {node: rank for rank, node in enumerate(G.topological_order(graph))}
+
+    def placement(self):
+        return self._placement
 
 
 def test_a_graph_carries_its_own_cost_model(fan_in):
@@ -316,31 +419,35 @@ def test_a_graph_carries_its_own_cost_model(fan_in):
     fan_in.set_cost(PyCost([2.0, 5.0]))
     assert isinstance(fan_in.cost(), PyCost)
 
-    options = G.cost_runtime_options_t()
-    options.scale = 1.0
-    # Unlimited lanes: four producers at 2.0, then two consumers at 5.0.
-    assert G.roofline_runtime_t(options).schedule(fan_in).makespan() == pytest.approx(7.0)
+    # Unlimited lanes: four producers at 2.0, then two consumers at 5.0. Ranking
+    # is what reads a graph's own model, so this is asked through predict_latency
+    # rather than by handing simulate() a cost it was given explicitly.
+    c = G.graph_config_t()
+    c.runtime = G.runtime_kind_t.roofline
+    assert G.predict_latency(fan_in, c) == pytest.approx(7.0)
 
 
-def test_a_runtimes_own_cost_model_overrides_the_graphs(fan_in):
+def test_an_explicit_cost_model_overrides_the_graphs_own(fan_in):
     fan_in.set_cost(PyCost([20.0, 50.0]))
-    options = G.cost_runtime_options_t()
-    options.scale = 1.0
-
-    cheap = G.roofline_runtime_t(PyCost([2.0, 5.0]), options).schedule(fan_in)
-    assert cheap.makespan() == pytest.approx(7.0)
+    c = G.graph_config_t()
+    c.runtime = G.runtime_kind_t.roofline
+    assert G.predict_latency(fan_in, c, PyCost([2.0, 5.0])) == pytest.approx(7.0)
 
 
-def test_scheduling_a_graph_with_no_cost_raises(fan_in):
+def test_pricing_a_graph_with_no_cost_raises(fan_in):
+    c = G.graph_config_t()
+    c.runtime = G.runtime_kind_t.roofline
     with pytest.raises(Exception):
-        G.roofline_runtime_t().schedule(fan_in)
+        G.predict_latency(fan_in, c)
 
 
 def test_a_python_runtime_schedules_and_ranks(fan_in):
     fan_in.set_cost(PyCost([2.0, 5.0]))
     runtime = SerialRuntime()
 
-    s = runtime.schedule(fan_in)
+    options = G.simulate_options_t()
+    options.lanes = 8  # the policy's own placement, not the machine, serialises
+    s = G.simulate(fan_in, runtime, fan_in.cost(), options)
     assert s.runtime == "serial"
     assert s.num_lanes() == 1
     # One lane, nothing overlapping: 4 * 2.0 + 2 * 5.0.
@@ -348,9 +455,11 @@ def test_a_python_runtime_schedules_and_ranks(fan_in):
     assert len(s.order) == fan_in.num_nodes()
     for n in s.order:
         assert s.finish(n) == pytest.approx(s.start(n) + s.duration(n))
+        assert s.lane(n) == 0
 
     c = G.graph_config_t()
     c.runtime_override = runtime
+    c.lanes = 8
     c.name = "serial"
     assert G.predict_latency(fan_in, c) == pytest.approx(18.0)
 
@@ -363,18 +472,18 @@ def test_a_python_runtime_schedules_and_ranks(fan_in):
 
 def test_a_python_runtime_can_be_traced(fan_in):
     fan_in.set_cost(PyCost([2.0, 5.0]))
-    s = SerialRuntime().schedule(fan_in)
+    s = G.simulate(fan_in, SerialRuntime(), fan_in.cost())
     doc = json.loads(G.chrome_trace(fan_in, s))
     assert len(doc["traceEvents"]) > 0
 
 
-def test_callable_set_indexes_a_table(fan_in):
+def test_index_offsets_indexes_a_table(fan_in):
     # The escape hatch: indices a kernel model already computed, rather than a
     # closed form re-derived here.
     touched = {0: [0, 1], 1: [2, 3]}
     x = G.allocation_t("x", [8])
     p = G.operation_t("produce", 2)
-    p.access_patterns = [G.write(x, G.callable_set(lambda wg, it, env: touched[wg]))]
+    p.access_patterns = [G.write(x, G.index_offsets(lambda wg, it, ctx: touched[wg]))]
     c = G.operation_t("consume", 2)
     c.access_patterns = [G.read(x, G.contiguous(4))]
     g = G.graph_t([p, c], name="table")
@@ -466,7 +575,6 @@ def config(runtime, lanes, name=""):
     c = G.graph_config_t()
     c.runtime = runtime
     c.lanes = lanes
-    c.scale = 1.0
     c.name = name
     return c
 
@@ -486,10 +594,14 @@ def test_ranking_returns_best_first(fan_in):
     assert len(G.select_topk_configs(fan_in, configs, 2, table)) == 2
 
 
-def test_integer_runtimes_rank_without_a_cost_model(fan_in):
+def test_flat_priced_kinds_rank_without_a_cost_model(fan_in):
     configs = [config(G.runtime_kind_t.asap, 1), config(G.runtime_kind_t.asap, 4)]
     ranked = G.rank_configs(fan_in, configs)
     assert ranked[0].latency < ranked[1].latency
+
+    # A prediction is a cycle count, which is what makes it comparable at all:
+    # four atoms of one cycle over four lanes, then two more, is two.
+    assert ranked[0].latency == pytest.approx(2.0)
 
 
 def test_infeasible_candidates_are_reported_not_raised(fan_in):
@@ -528,18 +640,24 @@ def test_ranking_across_graphs_prices_the_cross_product(fan_in):
 def test_runtime_kind_names_round_trip():
     for name in ("breadth_first", "asap", "depth_first", "roofline", "event_driven", "xcd"):
         kind = getattr(G.runtime_kind_t, name)
-        assert G.is_continuous(kind) == (name in ("roofline", "event_driven", "xcd"))
+        assert G.needs_cost_model(kind) == (name in ("roofline", "event_driven", "xcd"))
 
 
 # --- trace --------------------------------------------------------------
 
 
+def _timed(graph, cycles=2.0, lanes=3):
+    """A schedule in microseconds, which is the unit a viewer's axis is in."""
+    options = G.simulate_options_t()
+    options.lanes = lanes
+    s = G.simulate(graph, G.asap_runtime_t(), flat_cost(graph, cycles), options)
+    # A clock of 1 GHz makes a cycle a nanosecond, so the microsecond figures
+    # below stay the small round numbers the assertions can name.
+    return G.to_seconds(s, G.fixed_clock_t(1.0), 1e6, "us")
+
+
 def test_a_trace_is_valid_json_a_viewer_can_load(fan_in):
-    table = flat_cost(fan_in, 2.0)
-    options = G.cost_runtime_options_t()
-    options.lanes = 3
-    options.scale = 1.0
-    s = G.roofline_runtime_t(table, options).schedule(fan_in)
+    s = _timed(fan_in)
 
     doc = json.loads(G.chrome_trace(fan_in, s))
     events = doc["traceEvents"]
@@ -547,24 +665,22 @@ def test_a_trace_is_valid_json_a_viewer_can_load(fan_in):
     slices = [e for e in events if e.get("ph") == "X"]
     assert len(slices) == 6
     assert {e["name"] for e in slices} == {"a", "b"}
-    assert all(e["dur"] == 2 for e in slices)
+    # Two cycles at 1 GHz is two nanoseconds, which is 0.002 of a microsecond.
+    assert all(e["dur"] == pytest.approx(0.002) for e in slices)
 
     # Dependency arrows, one pair per edge.
     assert len([e for e in events if e.get("ph") == "s"]) == len(fan_in.edges())
     assert len([e for e in events if e.get("ph") == "f"]) == len(fan_in.edges())
 
 
-def test_an_integer_schedule_also_traces(fan_in):
-    s = G.asap_runtime_t(lanes=2).schedule(fan_in)
+def test_a_cycle_schedule_also_traces(fan_in):
+    s = _simulate(fan_in, G.asap_runtime_t(), lanes=2)
     doc = json.loads(G.chrome_trace(fan_in, s))
     assert len([e for e in doc["traceEvents"] if e.get("ph") == "X"]) == 6
 
 
 def test_a_trace_can_be_written_to_disk(fan_in, tmp_path):
-    table = flat_cost(fan_in, 2.0)
-    options = G.cost_runtime_options_t()
-    options.scale = 1.0
-    s = G.roofline_runtime_t(table, options).schedule(fan_in)
+    s = _timed(fan_in)
 
     path = tmp_path / "trace.json"
     G.write_chrome_trace(fan_in, s, str(path))
@@ -572,10 +688,7 @@ def test_a_trace_can_be_written_to_disk(fan_in, tmp_path):
 
 
 def test_flow_events_can_be_turned_off(fan_in):
-    table = flat_cost(fan_in, 2.0)
-    options = G.cost_runtime_options_t()
-    options.scale = 1.0
-    s = G.roofline_runtime_t(table, options).schedule(fan_in)
+    s = _timed(fan_in)
 
     quiet = G.trace_options_t()
     quiet.flow_edges = False
@@ -605,16 +718,20 @@ def test_the_pipeline_composes_end_to_end(fan_in, tmp_path):
     assert ranked[1].config.name == "lanes=8"
     assert ranked[0].latency == ranked[1].latency
 
-    options = G.cost_runtime_options_t()
+    options = G.simulate_options_t()
     options.lanes = best.config.lanes
-    options.scale = best.config.scale
-    s = G.roofline_runtime_t(table, options).schedule(fan_in)
+    s = G.simulate(fan_in, G.asap_runtime_t(), table, options)
     assert s.makespan() == pytest.approx(best.latency)
 
     # The collective dominates, which is the asymmetry a uniform timestep hides.
     busy = s.busy_by_op()
     assert busy[1] > busy[0]
 
+    # Only now, with a schedule in hand and a viewer to draw it, does a clock
+    # enter — the last step rather than a property of any cost above.
+    timed = G.to_seconds(s, G.fixed_clock_t(2.1), 1e6, "us")
+    assert timed.makespan() == pytest.approx(s.makespan() / 2100.0)
+
     path = tmp_path / "pipeline.json"
-    G.write_chrome_trace(fan_in, s, str(path))
+    G.write_chrome_trace(fan_in, timed, str(path))
     assert len(json.loads(path.read_text())["traceEvents"]) > 6

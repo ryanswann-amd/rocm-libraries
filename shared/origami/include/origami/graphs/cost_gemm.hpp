@@ -42,9 +42,9 @@
  *
  * The bridge is deliberately thin. `origami::gemm::compute_tile_latency` already
  * models one K-complete macro-tile on one compute unit, which is exactly one
- * workgroup of a GEMM operation, so the work here is unit conversion and
- * plumbing rather than modelling: origami reports **cycles**, the graphs cost
- * interface is in **seconds**.
+ * workgroup of a GEMM operation, and it already answers in **cycles** — the
+ * same unit the graphs cost interface now speaks — so the work here is
+ * plumbing and validation rather than unit conversion.
  */
 #pragma once
 
@@ -65,8 +65,12 @@ namespace origami::graphs {
  * winner straight through without restating it.
  */
 struct gemm_spec_t {
-  problem_t problem;  ///< global GEMM shape and data types
-  config_t config;    ///< tile geometry and kernel configuration
+  // Qualified because origami::graphs now has its own problem_t and config_t,
+  // which are the graph's two symbol namespaces and a different thing entirely
+  // from origami's GEMM shape and tile geometry. Unqualified, the nearer
+  // declarations would win silently.
+  origami::problem_t problem;  ///< global GEMM shape and data types
+  origami::config_t config;    ///< tile geometry and kernel configuration
 
   /**
    * Compute units the model should assume are active. Unset uses the hardware's
@@ -76,18 +80,20 @@ struct gemm_spec_t {
 };
 
 /**
- * @brief Duration of one GEMM workgroup, in seconds.
+ * @brief Duration of one GEMM workgroup, in cycles.
  *
  * Wraps `origami::gemm::compute_tile_latency`, which prices one K-complete
- * macro-tile on one compute unit.
+ * macro-tile on one compute unit, and returns its answer unconverted: a
+ * frequency is a property of an operating point, not of the model, so this
+ * function does not apply one. `origami::graphs::to_seconds` is where a
+ * caller who wants a duration applies a clock.
  *
  * @param spec GEMM shape and tile configuration.
  * @param hardware Machine description.
- * @return double Seconds, converted from the model's cycles at the machine clock.
- * @throws std::invalid_argument If the configuration is invalid, or if the
- *         hardware reports a non-positive clock.
+ * @return double Cycles.
+ * @throws std::invalid_argument If the configuration is invalid.
  */
-double gemm_seconds(const gemm_spec_t& spec, const hardware_t& hardware);
+double gemm_cycles(const gemm_spec_t& spec, const hardware_t& hardware);
 
 /**
  * @brief Price an operation with origami's analytical GEMM model.
@@ -97,13 +103,33 @@ double gemm_seconds(const gemm_spec_t& spec, const hardware_t& hardware);
  * an active-CU count as a property of the launch rather than of the moment, so
  * `gemm_spec_t::active_cus` fixes it and the scheduler's instantaneous occupancy
  * is ignored. Saying so here is better than quietly substituting one for the
- * other, which would make an `event_driven_runtime_t` result look
- * contention-aware when it was not.
+ * other, which would make a schedule run with
+ * `simulate_options_t::reprice_on_dispatch` look contention-aware when it was
+ * not.
  *
  * @param spec GEMM shape and tile configuration.
  * @param hardware Machine description; copied, so it need not outlive the entry.
  * @return op_cost_t An entry for `cost_table_t::set`.
  */
 op_cost_t gemm_cost(gemm_spec_t spec, const hardware_t& hardware);
+
+/**
+ * @brief Hardware-scope bindings from origami's device description.
+ *
+ * The bridge between the machine a caller actually has — `hardware_t`, as
+ * returned by `get_hardware_for_device` — and the names a `cost_expr_t` may
+ * reference through `hardware_sym`. Lives here rather than in spec.hpp because
+ * this is the translation unit that already depends on origami's GEMM layer.
+ *
+ * Only facts the part unambiguously reports are published. A peak matrix-core
+ * throughput is deliberately absent: it depends on which MFMA shape and data
+ * type a kernel selected, which is a property of the configuration and not of
+ * the device, so a model that needs one should bind it itself rather than
+ * inherit a number that happens to be wrong for its instruction mix.
+ *
+ * @param hardware Device description.
+ * @return param_map_t Bindings for the hardware scope.
+ */
+param_map_t hardware_params(const hardware_t& hardware);
 
 }  // namespace origami::graphs

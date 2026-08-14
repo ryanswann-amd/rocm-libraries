@@ -36,7 +36,7 @@ GEMM = "gemm"
 
 
 def _pattern(table: Sequence[Sequence[Sequence[int]]]):
-    """A ``callable_set`` over ``table[wg][it]``, empty outside the table.
+    """An ``index_offsets`` map over ``table[wg][it]``, empty outside the table.
 
     Workgroups walk different numbers of iterations — the last one in a strided
     loop runs fewer — but an operation has one iteration count, so the short
@@ -44,7 +44,7 @@ def _pattern(table: Sequence[Sequence[Sequence[int]]]):
     no edges, which is exactly what a workgroup that has already finished does.
     """
 
-    def indices(wg: int, it: int, env) -> list:
+    def indices(wg: int, it: int, ctx) -> list:
         if wg >= len(table):
             return []
         walk = table[wg]
@@ -52,7 +52,7 @@ def _pattern(table: Sequence[Sequence[Sequence[int]]]):
             return []
         return list(walk[it])
 
-    return _graphs.callable_set(indices)
+    return _graphs.index_offsets(indices)
 
 
 def _grid(table: Sequence[Sequence[Sequence[int]]], what: str):

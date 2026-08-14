@@ -62,7 +62,7 @@ STUB
 # point stands in for it.
 #
 # It also binds the handful of origami::comm types needed to build a system_t.
-# bind_graphs.cpp already binds comm_spec_t and comm_seconds, so the comm arm is
+# bind_graphs.cpp already binds comm_spec_t and comm_cycles, so the comm arm is
 # reachable from Python except for its machine description, which lives in
 # bindings.cpp beside HIP-linked code. The model itself is HIP-free and is
 # already linked in here, so what is missing is only the constructors. They are

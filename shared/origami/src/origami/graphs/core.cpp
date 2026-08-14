@@ -40,17 +40,17 @@ namespace origami::graphs {
 allocation_t::allocation_t(std::string name, std::vector<scalar_expr_t> shape)
     : name_(std::move(name)), shape_(std::move(shape)) {}
 
-std::vector<index_t> allocation_t::resolved_shape(const env_t& env) const {
+std::vector<index_t> allocation_t::resolved_shape(const eval_context_t& ctx) const {
   std::vector<index_t> out;
   out.reserve(shape_.size());
-  for (const scalar_expr_t& d : shape_) out.push_back(d.eval(env));
+  for (const scalar_expr_t& d : shape_) out.push_back(d.eval(ctx));
   return out;
 }
 
-index_t allocation_t::resolved_size(const env_t& env) const {
+index_t allocation_t::resolved_size(const eval_context_t& ctx) const {
   if (shape_.empty()) return 0;
   index_t total = 1;
-  for (index_t d : resolved_shape(env)) total *= d;
+  for (index_t d : resolved_shape(ctx)) total *= d;
   return total;
 }
 
@@ -68,8 +68,8 @@ std::string allocation_t::shape_str() const {
 operation_t::operation_t(std::string name, scalar_expr_t num_workgroups)
     : name(std::move(name)), num_workgroups(std::move(num_workgroups)) {}
 
-index_t operation_t::resolved_num_workgroups(const env_t& env) const {
-  const index_t n = num_workgroups.eval(env);
+index_t operation_t::resolved_num_workgroups(const eval_context_t& ctx) const {
+  const index_t n = num_workgroups.eval(ctx);
   if (n < 0) {
     throw std::invalid_argument("operation '" + name + "' resolved to a negative workgroup count " +
                                 std::to_string(n));
@@ -77,8 +77,8 @@ index_t operation_t::resolved_num_workgroups(const env_t& env) const {
   return n;
 }
 
-index_t operation_t::resolved_num_iters(const env_t& env) const {
-  const index_t n = num_iters.eval(env);
+index_t operation_t::resolved_num_iters(const eval_context_t& ctx) const {
+  const index_t n = num_iters.eval(ctx);
   if (n < 1) {
     throw std::invalid_argument("operation '" + name + "' resolved to num_iters " +
                                 std::to_string(n) + "; at least 1 is required");
@@ -99,17 +99,17 @@ std::optional<index_set_t> operation_t::resolve(const std::string& allocation_na
                                                 role_t role,
                                                 int wg,
                                                 int it,
-                                                const env_t& env) const {
+                                                const eval_context_t& ctx) const {
   const std::vector<const access_pattern_t*> pats = patterns(allocation_name, role);
   if (pats.empty()) return std::nullopt;
 
   // One pattern is the overwhelmingly common case; return its set untouched so
   // an analytic progression survives and the intersection stays O(1).
-  if (pats.size() == 1) return pats.front()->indices(wg, it, env);
+  if (pats.size() == 1) return pats.front()->indices(wg, it, ctx);
 
   std::vector<index_t> merged;
   for (const access_pattern_t* ap : pats) {
-    const std::vector<index_t> v = to_vector(ap->indices(wg, it, env));
+    const std::vector<index_t> v = to_vector(ap->indices(wg, it, ctx));
     merged.insert(merged.end(), v.begin(), v.end());
   }
   return index_set_t{finite_set_t::of(std::move(merged))};
@@ -117,8 +117,11 @@ std::optional<index_set_t> operation_t::resolve(const std::string& allocation_na
 
 // ─── graph_t ──────────────────────────────────────────────────────────
 
-graph_t::graph_t(std::vector<operation_t> operations, env_t dims, std::string name)
-    : operations_(std::move(operations)), dims_(std::move(dims)), name_(std::move(name)) {
+graph_t::graph_t(std::vector<operation_t> operations, eval_context_t ctx, std::string name)
+    : operations_(std::move(operations))
+    , ctx_(std::move(ctx))
+    , dims_(ctx_.to_env())
+    , name_(std::move(name)) {
   collect_allocations();
   resolve_grids();
   derive_edges();
@@ -163,8 +166,8 @@ void graph_t::resolve_grids() {
     index_t wgs   = 0;
     index_t iters = 0;
     try {
-      wgs   = op.resolved_num_workgroups(dims_);
-      iters = op.resolved_num_iters(dims_);
+      wgs   = op.resolved_num_workgroups(ctx_);
+      iters = op.resolved_num_iters(ctx_);
     } catch (const std::out_of_range& e) {
       throw std::out_of_range("operation '" + op.name + "' has an unbound dimension; bind it in " +
                               "the graph's env_t (" + e.what() + ")");
@@ -215,7 +218,7 @@ void graph_t::edges_on(int producer, int consumer, const allocation_t& allocatio
   const int c_iters = static_cast<int>(iter_count_[static_cast<std::size_t>(consumer)]);
   for (int wc = 0; wc < c_wgs; ++wc) {
     for (int itc = 0; itc < c_iters; ++itc) {
-      std::optional<index_set_t> rs = c.resolve(allocation.name(), role_t::read, wc, itc, dims_);
+      std::optional<index_set_t> rs = c.resolve(allocation.name(), role_t::read, wc, itc, ctx_);
       if (rs.has_value()) reads.push_back({wc, itc, std::move(*rs)});
     }
   }
@@ -225,7 +228,7 @@ void graph_t::edges_on(int producer, int consumer, const allocation_t& allocatio
   const int p_iters = static_cast<int>(iter_count_[static_cast<std::size_t>(producer)]);
   for (int wp = 0; wp < p_wgs; ++wp) {
     for (int itp = 0; itp < p_iters; ++itp) {
-      std::optional<index_set_t> ws = p.resolve(allocation.name(), role_t::write, wp, itp, dims_);
+      std::optional<index_set_t> ws = p.resolve(allocation.name(), role_t::write, wp, itp, ctx_);
       if (!ws.has_value() || is_empty(*ws)) continue;
 
       for (const read_set_t& r : reads) {

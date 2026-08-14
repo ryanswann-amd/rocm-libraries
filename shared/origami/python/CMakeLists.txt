@@ -245,6 +245,23 @@ if(ORIGAMI_BUILD_TESTING OR BUILD_TESTING)
             DEPENDS _pyorigami
     )
 
+    # Run the symbolic specification acceptance tests: one description
+    # instantiated across a configuration sweep and ranked against a machine,
+    # transcribed from the design document rather than paraphrased.
+    add_test(
+        NAME "Python: test_graphs_spec"
+        COMMAND ${Python_EXECUTABLE} -m pytest tests/test_graphs_spec.py -v
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    set_tests_properties(
+        "Python: test_graphs_spec"
+        PROPERTIES
+            ENVIRONMENT
+            "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src:$ENV{PYTHONPATH}"
+            DEPENDS _pyorigami
+    )
+
     add_test(
         NAME "Python: test_comm_bindings"
         COMMAND ${Python_EXECUTABLE} -m pytest tests/test_comm.py -v

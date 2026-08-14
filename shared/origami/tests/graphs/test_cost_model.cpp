@@ -24,31 +24,22 @@
  *
  *******************************************************************************/
 
-// Umbrella include for origami::graphs (kirigami).
-//
-// Convenience header — pulls in every public type and function the
-// workgroup-graph model exposes. Internal compilation units should prefer the
-// finer-grained includes.
-//
-// Note that the GEMM cost arm (origami/graphs/cost_gemm.hpp) is deliberately
-// NOT included here: it links roc::origami and therefore HIP, while everything
-// below is pure C++17. Consumers that want it include it explicitly and link
-// roc::origami-graphs-gemm.
-//
-#pragma once
-
-#include "origami/graphs/analysis.hpp"
-#include "origami/graphs/core.hpp"
-#include "origami/graphs/cost.hpp"
-#include "origami/graphs/cost_expr.hpp"
 #include "origami/graphs/cost_model.hpp"
-#include "origami/graphs/free_graph.hpp"
-#include "origami/graphs/placement.hpp"
-#include "origami/graphs/ranking.hpp"
-#include "origami/graphs/runtime.hpp"
-#include "origami/graphs/simulate.hpp"
-#include "origami/graphs/spec.hpp"
-#include "origami/graphs/symbolic.hpp"
-#include "origami/graphs/trace.hpp"
-#include "origami/graphs/types.hpp"
-#include "origami/graphs/wg_graph.hpp"
+
+#include "test_harness.hpp"
+
+using namespace origami::graphs;
+
+TEST(unit_cost_charges_one_cycle_per_node_and_nothing_per_edge) {
+  const unit_cost_t cost;
+  CHECK_NEAR(cost.node_cycles(wg_node_t{0, 0, 0}), 1.0, 1e-12);
+  CHECK_NEAR(cost.node_cycles(wg_node_t{3, 7, 2}), 1.0, 1e-12);
+  CHECK_NEAR(cost.edge_cycles(edge_t{wg_node_t{0, 0, 0}, wg_node_t{1, 0, 0}, "a", 1}), 0.0, 1e-12);
+}
+
+TEST(node_cycles_at_defaults_to_ignoring_contention) {
+  const unit_cost_t cost;
+  CHECK_NEAR(cost.node_cycles_at(wg_node_t{0, 0, 0}, 64), 1.0, 1e-12);
+}
+
+ORIGAMI_TEST_MAIN()

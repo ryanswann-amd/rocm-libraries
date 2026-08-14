@@ -40,19 +40,27 @@
  * its consumers, which is what makes a critical path visible rather than merely
  * computable.
  *
- * Chrome's timestamps are microseconds. `cost_schedule_t` is in whatever unit
- * its runtime's `scale` produced, which defaults to microseconds, so the default
- * is already right; a schedule built in seconds needs `trace_options_t::scale`
- * set to 1e6 or the bars will be a million times too narrow.
+ * Chrome's timestamps are microseconds, and a `schedule_t` is in cycles, so the
+ * schedule a viewer really wants is a `timed_schedule_t` from
+ * `to_seconds(schedule, clock, 1e6, "us")`: a trace is a picture of time, and a
+ * cycle count is only a time once someone has named a clock. Both overloads are
+ * offered because rendering cycles is still useful for reading a schedule's
+ * shape, but `trace_options_t::scale` is a bare multiplier and cannot supply
+ * the missing clock — the only supported route to a time axis is `to_seconds`
+ * followed by the `timed_schedule_t` overload, never `scale` applied to cycles.
  */
 #pragma once
 
 #include <cstddef>
 #include <string>
 
-#include "origami/graphs/cost_runtime.hpp"
-#include "origami/graphs/runtime.hpp"
+#include "origami/graphs/simulate.hpp"
 #include "origami/graphs/wg_graph.hpp"
+
+// Only simulate.hpp is needed for schedule_t's and timed_schedule_t's full
+// definitions, not runtime.hpp: this file renders whatever schedule it is
+// handed and never constructs a policy itself, so runtime.hpp's four concrete
+// policies would be an unused dependency.
 
 namespace origami::graphs {
 
@@ -62,8 +70,16 @@ struct trace_options_t {
   std::string process_name = "kirigami";
 
   /**
-   * Multiplier onto every timestamp, for schedules not already in microseconds.
-   * A `cost_schedule_t` from a default runtime is, so this is usually left at 1.
+   * Multiplier onto every timestamp, for a `timed_schedule_t` not already
+   * scaled the way the caller wants (e.g. seconds versus microseconds).
+   *
+   * This is a bare multiplier and cannot carry a clock, so it has no honest
+   * use on a cycle-valued `schedule_t`: cycles become a time only by naming a
+   * frequency, which is what `to_seconds()` is for. Do not compute a
+   * cycles-to-time factor by hand and pass it here — that applies a clock
+   * outside `to_seconds()`, which is exactly what this library's cycles-as-cost
+   * convention exists to prevent. Left at 1 for a `timed_schedule_t` that is
+   * already in the unit its caller wants.
    */
   double scale = 1.0;
 
@@ -79,28 +95,32 @@ struct trace_options_t {
 };
 
 /**
- * @brief Render a continuous-time schedule as Chrome Trace Event JSON.
+ * @brief Render a schedule in real time as Chrome Trace Event JSON.
+ *
+ * The overload to prefer: a viewer's axis is time, and `to_seconds` is where a
+ * clock was named, so the numbers on the bars mean what the axis says.
  *
  * @param graph Graph the schedule was built from, for names and dependencies.
- * @param schedule Schedule to render.
+ * @param schedule Schedule to render, in whatever unit `to_seconds` produced.
  * @param options Presentation choices.
  * @return std::string A complete JSON document.
  */
 std::string chrome_trace(const wg_graph_t& graph,
-                         const cost_schedule_t& schedule,
+                         const timed_schedule_t& schedule,
                          const trace_options_t& options = {});
 
 /**
- * @brief Render an integer-timestep schedule as Chrome Trace Event JSON.
+ * @brief Render a cycle-based schedule's shape as Chrome Trace Event JSON.
  *
- * `schedule_t` records when each atom ran but not where, because an integer
- * runtime models lane *count* rather than lane identity. Atoms sharing a
- * timestep are therefore spread across tracks in dispatch order, which is a
- * faithful picture of the shape even though the specific track an atom lands on
- * carries no meaning.
+ * Not a time axis: the bars are cycles wide, and `trace_options_t::scale` is a
+ * bare multiplier that cannot supply the missing clock, so the numbers on
+ * Chrome's microsecond axis are not meaningful as a duration here — only the
+ * relative widths and ordering are. A caller who wants a real time axis names
+ * a clock, calls `to_seconds()`, and uses the `timed_schedule_t` overload
+ * above instead of reaching for `scale` on this one.
  *
  * @param graph Graph the schedule was built from.
- * @param schedule Schedule to render.
+ * @param schedule Schedule to render, in cycles.
  * @param options Presentation choices.
  * @return std::string A complete JSON document.
  */
@@ -109,7 +129,7 @@ std::string chrome_trace(const wg_graph_t& graph,
                          const trace_options_t& options = {});
 
 /**
- * @brief Write a continuous-time schedule to a Chrome Trace Event file.
+ * @brief Write a real-time schedule to a Chrome Trace Event file.
  *
  * @param graph Graph the schedule was built from.
  * @param schedule Schedule to render.
@@ -118,12 +138,12 @@ std::string chrome_trace(const wg_graph_t& graph,
  * @throws std::runtime_error If the file cannot be written.
  */
 void write_chrome_trace(const wg_graph_t& graph,
-                        const cost_schedule_t& schedule,
+                        const timed_schedule_t& schedule,
                         const std::string& path,
                         const trace_options_t& options = {});
 
 /**
- * @brief Write an integer-timestep schedule to a Chrome Trace Event file.
+ * @brief Write a cycle-based schedule to a Chrome Trace Event file.
  *
  * @param graph Graph the schedule was built from.
  * @param schedule Schedule to render.

@@ -79,6 +79,31 @@ enum class expr_kind_t : std::uint8_t {
   mul,       ///< a * b
   floordiv,  ///< floor(a / b)
   ceildiv,   ///< ceil(a / b) — the tile-count operator
+  mod,       ///< a mod b, Euclidean — the tile-decode operator
+  minimum,   ///< min(a, b) — clipping a tile to a boundary
+  maximum,   ///< max(a, b)
+};
+
+/**
+ * @brief A free symbol together with the namespace it resolves against.
+ *
+ * Ordered by scope then name so diagnostics and test expectations are stable.
+ */
+struct scoped_symbol_t {
+  scope_t scope = scope_t::problem;  ///< namespace the name resolves against
+  std::string name;                  ///< symbol name
+
+  /** @brief "problem.M" style rendering, for messages. */
+  std::string str() const { return std::string{scope_name(scope)} + "." + name; }
+
+  friend bool operator<(const scoped_symbol_t& a, const scoped_symbol_t& b) {
+    if (a.scope != b.scope) return a.scope < b.scope;
+    return a.name < b.name;
+  }
+
+  friend bool operator==(const scoped_symbol_t& a, const scoped_symbol_t& b) {
+    return a.scope == b.scope && a.name == b.name;
+  }
 };
 
 /**
@@ -86,9 +111,10 @@ enum class expr_kind_t : std::uint8_t {
  *
  * Value type wrapping a shared, immutable expression tree, so copies are a
  * refcount bump and expressions can be shared freely between operations. The
- * converting constructor from `index_t` is deliberately implicit: it is what
- * lets every builder below accept a literal where an expression is expected,
- * mirroring the `int | ScalarExpr` union the Python original uses throughout.
+ * converting constructor from `index_t` is deliberately implicit, which is what
+ * lets a builder take a literal wherever it takes an expression: both
+ * `ceil_div(M, 128)` and `ceil_div(M, BM)` compile, and no entry point below
+ * needs a second overload to accept the constant form.
  */
 class scalar_expr_t {
  public:
@@ -107,12 +133,26 @@ class scalar_expr_t {
   /**
    * @brief Evaluate against concrete dimension bindings.
    *
+   * Binds the problem namespace only; a config-scope symbol left unresolved by
+   * this overload throws. Prefer the `eval_context_t` overload.
+   *
    * @param env Bindings for every free symbol in this expression.
    * @return index_t The evaluated value.
    * @throws std::out_of_range If a referenced dimension is unbound.
    * @throws std::domain_error On division by zero.
    */
   index_t eval(const env_t& env) const;
+
+  /**
+   * @brief Evaluate against both namespaces.
+   *
+   * @param ctx Problem and config bindings.
+   * @return index_t The evaluated value.
+   * @throws std::out_of_range If a referenced symbol is unbound.
+   * @throws std::invalid_argument If a symbol is bound to a non-integral value.
+   * @throws std::domain_error On division by zero.
+   */
+  index_t eval(const eval_context_t& ctx) const;
 
   /**
    * @brief Evaluate an expression that must already be concrete.
@@ -125,11 +165,20 @@ class scalar_expr_t {
   /**
    * @brief Names of the unbound dimensions this expression references.
    *
-   * Ordered so error messages and test expectations are deterministic.
+   * Ordered so error messages and test expectations are deterministic. Names
+   * are bare, so a problem dimension and a config parameter sharing a name
+   * appear once; `scoped_symbols` is the precise form.
    *
    * @return std::set<std::string> Free dimension names.
    */
   std::set<std::string> free_symbols() const;
+
+  /**
+   * @brief Free symbols with the namespace each resolves against.
+   *
+   * @return std::set<scoped_symbol_t> Free symbols, ordered by scope then name.
+   */
+  std::set<scoped_symbol_t> scoped_symbols() const;
 
   /** @brief True when this expression references no dimensions. */
   bool is_constant() const;
@@ -148,7 +197,7 @@ class scalar_expr_t {
   struct node_t;
   explicit scalar_expr_t(std::shared_ptr<const node_t> node);
 
-  friend scalar_expr_t sym(std::string name);
+  friend scalar_expr_t scoped_sym(scope_t scope, std::string name);
   friend scalar_expr_t make_binary(expr_kind_t kind,
                                    const scalar_expr_t& lhs,
                                    const scalar_expr_t& rhs);
@@ -157,10 +206,42 @@ class scalar_expr_t {
 };
 
 /**
+ * @brief Reference a name in a chosen namespace.
+ *
+ * Index expressions may only reach the problem and config scopes; asking for
+ * hardware or runtime here throws, because neither is known at the point an
+ * access pattern is resolved.
+ *
+ * @param scope Namespace the name resolves against.
+ * @param name Symbol name.
+ * @return scalar_expr_t A symbol leaf.
+ * @throws std::invalid_argument If the scope is not addressable from an index.
+ */
+scalar_expr_t scoped_sym(scope_t scope, std::string name);
+
+/**
+ * @brief Reference a problem dimension, e.g. `problem_sym("M")`.
+ *
+ * @param name Dimension name.
+ * @return scalar_expr_t A problem-scope symbol leaf.
+ */
+scalar_expr_t problem_sym(std::string name);
+
+/**
+ * @brief Reference a tuning parameter, e.g. `config_sym("BM")`.
+ *
+ * @param name Parameter name.
+ * @return scalar_expr_t A config-scope symbol leaf.
+ */
+scalar_expr_t config_sym(std::string name);
+
+/**
  * @brief Reference a named problem dimension, e.g. `sym("M")`.
  *
- * @param name Dimension name, resolved against the graph's `env_t`.
- * @return scalar_expr_t A symbol leaf.
+ * The single-namespace spelling, equivalent to `problem_sym`.
+ *
+ * @param name Dimension name.
+ * @return scalar_expr_t A problem-scope symbol leaf.
  */
 scalar_expr_t sym(std::string name);
 
@@ -190,6 +271,45 @@ scalar_expr_t operator/(const scalar_expr_t& lhs, const scalar_expr_t& rhs);
  * @return scalar_expr_t The ceiling-division expression.
  */
 scalar_expr_t ceil_div(const scalar_expr_t& a, const scalar_expr_t& b);
+
+/**
+ * @brief Symbolic `floor(a / b)`, the explicit spelling of `operator/`.
+ *
+ * @param a Numerator.
+ * @param b Denominator.
+ * @return scalar_expr_t The floor-division expression.
+ */
+scalar_expr_t floor_div(const scalar_expr_t& a, const scalar_expr_t& b);
+
+/**
+ * @brief Symbolic Euclidean modulo — the other half of a tile decode.
+ *
+ * @param a Value.
+ * @param b Modulus.
+ * @return scalar_expr_t The modulo expression.
+ */
+scalar_expr_t mod(const scalar_expr_t& a, const scalar_expr_t& b);
+
+/**
+ * @brief Symbolic `min(a, b)`, which is how a boundary tile is clipped.
+ *
+ * Kept on the integer expression rather than only on the cost expression so
+ * that clipping a tile against a problem dimension stays exact.
+ *
+ * @param a First operand.
+ * @param b Second operand.
+ * @return scalar_expr_t The minimum expression.
+ */
+scalar_expr_t minimum(const scalar_expr_t& a, const scalar_expr_t& b);
+
+/**
+ * @brief Symbolic `max(a, b)`.
+ *
+ * @param a First operand.
+ * @param b Second operand.
+ * @return scalar_expr_t The maximum expression.
+ */
+scalar_expr_t maximum(const scalar_expr_t& a, const scalar_expr_t& b);
 
 /**
  * @brief Workgroup count for a 2D tiled operator — the GEMM grid.
@@ -394,7 +514,7 @@ index_t intersect_size(const index_set_t& a, const index_set_t& b);
 // monolithic access simply ignore it.
 
 /** @brief Canonical index map: workgroup and iteration to the indices touched. */
-using index_fn_t = std::function<index_set_t(int wg, int it, const env_t& env)>;
+using index_fn_t = std::function<index_set_t(int wg, int it, const eval_context_t& ctx)>;
 
 /**
  * @brief Each workgroup owns a contiguous chunk of @p block indices.
@@ -451,14 +571,16 @@ index_fn_t streamed(scalar_expr_t block, scalar_expr_t num_iters, scalar_expr_t 
 /**
  * @brief Wrap an arbitrary index-producing callable as an index map.
  *
- * The escape hatch for gather/scatter with no closed form. Note that this is
- * invoked once per workgroup-iteration pair inside the quadratic derivation, and
- * its result is materialised, so a closed-form builder is dramatically cheaper
- * where one exists.
+ * The escape hatch for gather/scatter with no closed form, and the fallback
+ * rather than the default. It is invoked once per workgroup-iteration pair
+ * inside the quadratic derivation and its result is materialised, whereas the
+ * closed-form builders above intersect as arithmetic progressions in constant
+ * time. Reach for one of those where the access has a closed form.
  *
  * @param fn Callable returning the indices touched by one workgroup-iteration.
  * @return index_fn_t The index map.
  */
-index_fn_t callable_set(std::function<std::vector<index_t>(int wg, int it, const env_t& env)> fn);
+index_fn_t index_offsets(
+    std::function<std::vector<index_t>(int wg, int it, const eval_context_t& ctx)> fn);
 
 }  // namespace origami::graphs

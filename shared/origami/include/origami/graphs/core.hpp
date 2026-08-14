@@ -79,6 +79,7 @@
 #include <utility>
 #include <vector>
 
+#include "origami/graphs/cost_expr.hpp"
 #include "origami/graphs/symbolic.hpp"
 #include "origami/graphs/types.hpp"
 #include "origami/graphs/wg_graph.hpp"
@@ -129,7 +130,7 @@ class allocation_t {
    * @param env Dimension bindings.
    * @return std::vector<index_t> The concrete shape.
    */
-  std::vector<index_t> resolved_shape(const env_t& env) const;
+  std::vector<index_t> resolved_shape(const eval_context_t& ctx) const;
 
   /**
    * @brief Total element count once dimensions are bound.
@@ -137,7 +138,7 @@ class allocation_t {
    * @param env Dimension bindings.
    * @return index_t Product of the resolved dimensions; zero for a rank-0 shape.
    */
-  index_t resolved_size(const env_t& env) const;
+  index_t resolved_size(const eval_context_t& ctx) const;
 
   /**
    * @brief Render the declared shape for diagnostics.
@@ -187,16 +188,18 @@ inline constexpr bool always_false_v = false;
  */
 template <typename F>
 index_fn_t make_index_fn(F fn) {
-  if constexpr (std::is_invocable_r_v<index_set_t, F&, int, int, const env_t&>) {
+  if constexpr (std::is_invocable_r_v<index_set_t, F&, int, int, const eval_context_t&>) {
     return index_fn_t{std::move(fn)};
-  } else if constexpr (std::is_invocable_r_v<index_set_t, F&, int, const env_t&>) {
-    return
-        [fn = std::move(fn)](int wg, int, const env_t& env) -> index_set_t { return fn(wg, env); };
+  } else if constexpr (std::is_invocable_r_v<index_set_t, F&, int, const eval_context_t&>) {
+    return [fn = std::move(fn)](int wg, int, const eval_context_t& ctx) -> index_set_t {
+      return fn(wg, ctx);
+    };
   } else if constexpr (std::is_invocable_r_v<index_set_t, F&, int>) {
-    return [fn = std::move(fn)](int wg, int, const env_t&) -> index_set_t { return fn(wg); };
+    return
+        [fn = std::move(fn)](int wg, int, const eval_context_t&) -> index_set_t { return fn(wg); };
   } else {
     static_assert(detail::always_false_v<F>,
-                  "index map must be callable as (wg), (wg, env) or (wg, it, env) "
+                  "index map must be callable as (wg), (wg, ctx) or (wg, it, ctx) "
                   "and return an index_set_t");
   }
 }
@@ -253,6 +256,29 @@ struct operation_t {
   scalar_expr_t num_iters = index_t{1};           ///< internal pipeline depth, at least 1
 
   /**
+   * @brief Deferred price of one node of this operation, in cycles for one
+   *        workgroup-iteration.
+   *
+   * Every node derived from the operation inherits this one function, and the
+   * function receives the node, so boundary workgroups can be charged for the
+   * tile they actually own rather than a full one. It returns an expression
+   * rather than a number because hardware is not known here — a specification
+   * is device-independent, and the expression is evaluated at dispatch, when
+   * both the machine and the live occupancy are known.
+   *
+   * The expression should evaluate to cycles, matching `cost_model_t`.
+   * `hardware_params` publishes both per-cycle hardware-scope symbols and a
+   * handful of per-second convenience ones (`peak_flops_per_cu`,
+   * `hbm_bytes_per_second`, and others); dividing by one of the per-second
+   * names lands the expression back in seconds with no `clock_hz` in sight to
+   * warn you, so prefer the per-cycle name and see that function's doc for
+   * the full rule.
+   *
+   * Left empty when the graph is priced some other way, or not at all.
+   */
+  std::function<cost_expr_t(const wg_node_t& node)> node_cost;
+
+  /**
    * @brief Declare an operation with an empty access list.
    *
    * @param name Identifier.
@@ -267,7 +293,7 @@ struct operation_t {
    * @return index_t Concrete workgroup count.
    * @throws std::invalid_argument If the count resolves negative.
    */
-  index_t resolved_num_workgroups(const env_t& env) const;
+  index_t resolved_num_workgroups(const eval_context_t& ctx) const;
 
   /**
    * @brief Resolve the internal iteration count.
@@ -276,7 +302,7 @@ struct operation_t {
    * @return index_t Concrete iteration count.
    * @throws std::invalid_argument If the count resolves below one.
    */
-  index_t resolved_num_iters(const env_t& env) const;
+  index_t resolved_num_iters(const eval_context_t& ctx) const;
 
   /**
    * @brief Every access matching an allocation name and role.
@@ -300,14 +326,14 @@ struct operation_t {
    * @param role Read or write.
    * @param wg Workgroup ordinal.
    * @param it Iteration ordinal.
-   * @param env Dimension bindings.
+   * @param ctx Problem and config bindings.
    * @return std::optional<index_set_t> The indices, or nothing if no such access.
    */
   std::optional<index_set_t> resolve(const std::string& allocation_name,
                                      role_t role,
                                      int wg,
                                      int it,
-                                     const env_t& env) const;
+                                     const eval_context_t& ctx) const;
 };
 
 // ─── graph_t ──────────────────────────────────────────────────────────
@@ -326,19 +352,34 @@ class graph_t : public wg_graph_t {
   /**
    * @brief Derive the workgroup graph for an operation sequence.
    *
+   * The graph keeps the problem and config it was built from, so a cost
+   * expression can be evaluated against them later, when hardware arrives at
+   * ranking. An `env_t` converts implicitly and binds the problem namespace.
+   *
    * @param operations Operations in topological order; dependencies flow forwards only.
-   * @param dims Bindings for every symbolic dimension the operations reference.
+   * @param ctx Bindings for every symbolic name the operations reference.
    * @param name Optional label, surfaced in ranking results.
    * @throws std::invalid_argument On a duplicate operation name, an allocation
    *         declared with conflicting shapes, or a grid that resolves invalid.
    * @throws std::out_of_range If a referenced dimension is unbound.
    */
-  explicit graph_t(std::vector<operation_t> operations, env_t dims = {}, std::string name = "");
+  explicit graph_t(std::vector<operation_t> operations,
+                   eval_context_t ctx = {},
+                   std::string name   = "");
 
   /** @brief The operations, in the order supplied. */
   const std::vector<operation_t>& operations() const { return operations_; }
 
-  /** @brief The dimension bindings used to resolve this graph. */
+  /** @brief The bindings this graph was resolved against. */
+  const eval_context_t& context() const { return ctx_; }
+
+  /** @brief The problem this graph was instantiated for. */
+  const problem_t& problem() const { return ctx_.problem; }
+
+  /** @brief The configuration this graph was instantiated for. */
+  const config_t& config() const { return ctx_.config; }
+
+  /** @brief The dimension bindings used to resolve this graph, both namespaces flattened. */
   const env_t& dims() const { return dims_; }
 
   /**
@@ -387,7 +428,8 @@ class graph_t : public wg_graph_t {
   void edges_on(int producer, int consumer, const allocation_t& allocation);
 
   std::vector<operation_t> operations_;
-  env_t dims_;
+  eval_context_t ctx_;
+  env_t dims_;  // ctx_ flattened, kept for the dims() accessor and the summary
   std::string name_;
 
   std::unordered_map<std::string, int> op_index_;

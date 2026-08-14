@@ -37,7 +37,9 @@
  * present in one and missing from the other shows up in the diff.
  */
 
+#include <algorithm>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -143,14 +145,28 @@ case_t case_two_sources() {
   return {"two_sources", graph_t({z, b, c})};
 }
 
+/**
+ * One group per distinct start cycle, in canonical (op, wg) order within a
+ * group -- what the old integer `schedule_t::timesteps()` produced, now done
+ * by hand since a cycle-based `schedule_t` has no notion of a timestep. Under
+ * `unit_cost_t` every start is an exact integer, so grouping by it reproduces
+ * the same wave structure the reference's timestep dispatch produces.
+ */
 std::string render(const wg_graph_t& g, const schedule_t& s) {
+  std::map<double, std::vector<wg_node_t>> groups;
+  for (const wg_node_t& n : s.order) groups[s.start.at(n)].push_back(n);
+
   std::string out;
   bool first = true;
-  for (const timestep_t& ts : s.timesteps()) {
+  for (auto& [t, group] : groups) {
+    std::stable_sort(group.begin(), group.end(), [](const wg_node_t& a, const wg_node_t& b) {
+      if (a.op != b.op) return a.op < b.op;
+      return a.wg < b.wg;
+    });
     if (!first) out += " | ";
     first = false;
-    out += std::to_string(ts.time) + ":";
-    for (const wg_node_t& n : ts.nodes) out += " " + g.label(n);
+    out += std::to_string(static_cast<long long>(t)) + ":";
+    for (const wg_node_t& n : group) out += " " + g.label(n);
   }
   return out;
 }
@@ -168,6 +184,8 @@ int main() {
                                                        case_two_sources};
   const std::vector<std::optional<int>> lane_counts = {unlimited_lanes, 1, 2, 3};
 
+  const unit_cost_t cost;
+
   for (const auto& make : cases) {
     const case_t c        = make();
     const std::string& nm = c.first;
@@ -175,15 +193,18 @@ int main() {
 
     for (const std::optional<int>& lanes : lane_counts) {
       std::vector<std::unique_ptr<runtime_t>> runtimes;
-      runtimes.push_back(std::make_unique<breadth_first_runtime_t>(lanes));
-      runtimes.push_back(std::make_unique<asap_runtime_t>(lanes));
-      runtimes.push_back(std::make_unique<depth_first_runtime_t>(lanes));
+      runtimes.push_back(std::make_unique<breadth_first_runtime_t>());
+      runtimes.push_back(std::make_unique<asap_runtime_t>());
+      runtimes.push_back(std::make_unique<depth_first_runtime_t>());
+
+      simulate_options_t opts;
+      opts.lanes = lanes;
 
       const std::string lane_str = lanes ? std::to_string(*lanes) : "None";
       for (const auto& rt : runtimes) {
-        const schedule_t s    = rt->schedule(g);
+        const schedule_t s    = simulate(g, *rt, cost, opts);
         const std::string tag = nm + "/lanes=" + lane_str + "/" + rt->name();
-        std::cout << tag << " makespan=" << s.makespan() << "\n";
+        std::cout << tag << " makespan=" << static_cast<long long>(s.makespan()) << "\n";
         std::cout << tag << " steps=" << render(g, s) << "\n";
       }
     }

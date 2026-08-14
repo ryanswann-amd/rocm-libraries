@@ -36,6 +36,7 @@
 #include "origami/graphs/core.hpp"
 #include "origami/graphs/cost.hpp"
 #include "origami/graphs/free_graph.hpp"
+#include "origami/graphs/runtime.hpp"
 #include "test_harness.hpp"
 
 using namespace origami::graphs;
@@ -114,15 +115,14 @@ cost_table_t flat_table(const wg_graph_t& g) {
 
 }  // namespace
 
-TEST(a_continuous_schedule_renders_one_slice_per_atom) {
+TEST(a_priced_schedule_renders_one_slice_per_atom) {
   const graph_t g          = fan_in();
   const cost_table_t table = flat_table(g);
-  cost_runtime_options_t opts;
+  simulate_options_t opts;
   opts.lanes = 3;
-  opts.scale = 1.0;
 
-  const cost_schedule_t s = roofline_runtime_t(table, opts).schedule(g);
-  const std::string json  = chrome_trace(g, s);
+  const schedule_t s     = simulate(g, asap_runtime_t{}, table, opts);
+  const std::string json = chrome_trace(g, s);
 
   CHECK(well_formed(json));
   CHECK(count(json, "\"ph\":\"X\"") == 6);    // one per node
@@ -135,11 +135,10 @@ TEST(a_continuous_schedule_renders_one_slice_per_atom) {
 TEST(lanes_become_named_and_ordered_tracks) {
   const graph_t g          = fan_in();
   const cost_table_t table = flat_table(g);
-  cost_runtime_options_t opts;
+  simulate_options_t opts;
   opts.lanes = 3;
-  opts.scale = 1.0;
 
-  const std::string json = chrome_trace(g, roofline_runtime_t(table, opts).schedule(g));
+  const std::string json = chrome_trace(g, simulate(g, asap_runtime_t{}, table, opts));
 
   CHECK(count(json, "\"name\":\"thread_name\"") == 3);
   // Without a sort index a viewer orders tracks by first appearance, which is
@@ -152,9 +151,7 @@ TEST(lanes_become_named_and_ordered_tracks) {
 TEST(dependencies_become_flow_events_that_can_be_turned_off) {
   const graph_t g          = fan_in();
   const cost_table_t table = flat_table(g);
-  cost_runtime_options_t opts;
-  opts.scale              = 1.0;
-  const cost_schedule_t s = roofline_runtime_t(table, opts).schedule(g);
+  const schedule_t s       = simulate(g, asap_runtime_t{}, table, simulate_options_t{});
 
   const std::string with = chrome_trace(g, s);
   CHECK(count(with, "\"ph\":\"s\"") == g.edges().size());
@@ -174,36 +171,70 @@ TEST(dependencies_become_flow_events_that_can_be_turned_off) {
 TEST(timestamps_carry_the_schedules_own_numbers) {
   const graph_t g          = fan_in();
   const cost_table_t table = flat_table(g);
-  cost_runtime_options_t opts;
-  opts.scale              = 1.0;
-  const cost_schedule_t s = roofline_runtime_t(table, opts).schedule(g);
+  const schedule_t s       = simulate(g, asap_runtime_t{}, table, simulate_options_t{});
 
   const std::string json = chrome_trace(g, s);
   CHECK(count(json, "\"dur\":2") == 6);  // every atom costs 2 in this model
   CHECK(json.find("\"ts\":0,") != std::string::npos);
 
-  // Chrome reads microseconds, so a schedule left in seconds needs scaling or
-  // every bar is a million times too narrow.
-  trace_options_t micros;
-  micros.scale = 1e6;
-  CHECK(count(chrome_trace(g, s, micros), "\"dur\":2000000") == 6);
+  // scale is a bare multiplier on a cycle-valued schedule: it cannot supply a
+  // clock, so it does not turn these bars into microseconds. This just pins
+  // that the multiplier reaches every bar's rendered width unchanged, on an
+  // axis whose units remain not meaningful — the route to a real time axis is
+  // to_seconds(), exercised in the next test.
+  trace_options_t big;
+  big.scale = 1e6;
+  CHECK(count(chrome_trace(g, s, big), "\"dur\":2000000") == 6);
 }
 
-TEST(an_integer_schedule_renders_with_invented_tracks) {
-  const graph_t g        = fan_in();
-  const schedule_t s     = asap_runtime_t(std::optional<int>{2}).schedule(g);
+TEST(a_timed_schedule_traces_in_the_unit_it_was_converted_to) {
+  // The overload a viewer really wants: `to_seconds` is where a clock was
+  // named, so the axis and the numbers on the bars finally mean the same thing,
+  // and `trace_options_t::scale` has nothing left to do.
+  const graph_t g          = fan_in();
+  const cost_table_t table = flat_table(g);
+  const schedule_t cycles  = simulate(g, asap_runtime_t{}, table, simulate_options_t{});
+
+  // A gigahertz makes a cycle a nanosecond, so two cycles is 0.002 of a
+  // microsecond, and the scale that gets there is the converter's own.
+  const fixed_clock_t clock(1.0);
+  const timed_schedule_t s = to_seconds(cycles, clock, 1e6, "us");
+  CHECK(s.units == "us");
+
+  const std::string json = chrome_trace(g, s);
+  CHECK(well_formed(json));
+  CHECK(count(json, "\"ph\":\"X\"") == 6);
+  CHECK(count(json, "\"dur\":0.002") == 6);
+  CHECK(count(json, "\"ph\":\"s\"") == g.edges().size());
+}
+
+TEST(a_cycle_schedule_renders_with_invented_tracks) {
+  const graph_t g = fan_in();
+  simulate_options_t opts;
+  opts.lanes = 2;
+  const asap_runtime_t runtime;
+  const schedule_t s     = simulate(g, runtime, unit_cost_t{}, opts);
   const std::string json = chrome_trace(g, s);
 
   CHECK(well_formed(json));
   CHECK(count(json, "\"ph\":\"X\"") == 6);
-  // Two lanes, so at most two atoms share a timestep and two tracks suffice.
+  // Two lanes, so at most two atoms run at once and two tracks suffice.
   CHECK(count(json, "\"name\":\"thread_name\"") == 2);
-  CHECK(count(json, "\"dur\":1") == 6);  // one timestep each
+  CHECK(count(json, "\"dur\":1") == 6);  // one cycle each, under the unit cost model
 }
 
-TEST(a_longer_timestep_widens_every_bar) {
-  const graph_t g    = fan_in();
-  const schedule_t s = asap_runtime_t(std::optional<int>{2}, /*wg_duration=*/5).schedule(g);
+TEST(a_longer_cost_model_widens_every_bar) {
+  const graph_t g = fan_in();
+  simulate_options_t opts;
+  opts.lanes = 2;
+
+  class flat5_t : public cost_model_t {
+   public:
+    double node_cycles(const wg_node_t&) const override { return 5.0; }
+    double edge_cycles(const edge_t&) const override { return 0.0; }
+  };
+  const asap_runtime_t runtime;
+  const schedule_t s = simulate(g, runtime, flat5_t{}, opts);
   CHECK(count(chrome_trace(g, s), "\"dur\":5") == 6);
 }
 
@@ -216,10 +247,9 @@ TEST(operation_names_are_escaped) {
   cost_table_t table(g);
   table.set("say \"hi\"\n\\path",
             op_cost_t::from_custom([](const wg_node_t&, int) { return 1.0; }));
-  cost_runtime_options_t opts;
-  opts.scale = 1.0;
 
-  const std::string json = chrome_trace(g, roofline_runtime_t(table, opts).schedule(g));
+  const std::string json =
+      chrome_trace(g, simulate(g, asap_runtime_t{}, table, simulate_options_t{}));
   CHECK(well_formed(json));
   CHECK(json.find("say \\\"hi\\\"\\n\\\\path") != std::string::npos);
 }
@@ -227,7 +257,8 @@ TEST(operation_names_are_escaped) {
 TEST(an_empty_schedule_still_renders_a_loadable_document) {
   const free_graph_t g;
   const cost_table_t table(g);
-  const std::string json = chrome_trace(g, roofline_runtime_t(table).schedule(g));
+  const std::string json =
+      chrome_trace(g, simulate(g, asap_runtime_t{}, table, simulate_options_t{}));
 
   CHECK(well_formed(json));
   CHECK(count(json, "\"ph\":\"X\"") == 0);
@@ -236,9 +267,7 @@ TEST(an_empty_schedule_still_renders_a_loadable_document) {
 TEST(node_arguments_can_be_dropped) {
   const graph_t g          = fan_in();
   const cost_table_t table = flat_table(g);
-  cost_runtime_options_t opts;
-  opts.scale              = 1.0;
-  const cost_schedule_t s = roofline_runtime_t(table, opts).schedule(g);
+  const schedule_t s       = simulate(g, asap_runtime_t{}, table, simulate_options_t{});
 
   CHECK(chrome_trace(g, s).find("\"args\":{\"wg\":") != std::string::npos);
 
@@ -252,21 +281,18 @@ TEST(node_arguments_can_be_dropped) {
 TEST(the_process_label_is_configurable) {
   const graph_t g          = fan_in();
   const cost_table_t table = flat_table(g);
-  cost_runtime_options_t opts;
-  opts.scale = 1.0;
 
   trace_options_t named;
-  named.process_name     = "two_shot at 8 lanes";
-  const std::string json = chrome_trace(g, roofline_runtime_t(table, opts).schedule(g), named);
+  named.process_name = "two_shot at 8 lanes";
+  const std::string json =
+      chrome_trace(g, simulate(g, asap_runtime_t{}, table, simulate_options_t{}), named);
   CHECK(json.find("\"name\":\"two_shot at 8 lanes\"") != std::string::npos);
 }
 
 TEST(writing_to_a_file_round_trips) {
   const graph_t g          = fan_in();
   const cost_table_t table = flat_table(g);
-  cost_runtime_options_t opts;
-  opts.scale              = 1.0;
-  const cost_schedule_t s = roofline_runtime_t(table, opts).schedule(g);
+  const schedule_t s       = simulate(g, asap_runtime_t{}, table, simulate_options_t{});
 
   const std::string path = std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") +
                            "/origami-graphs-trace-test.json";

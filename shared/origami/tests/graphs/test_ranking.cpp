@@ -34,6 +34,8 @@
 #include "origami/graphs/core.hpp"
 #include "origami/graphs/cost.hpp"
 #include "origami/graphs/free_graph.hpp"
+#include "origami/graphs/placement.hpp"
+#include "origami/graphs/runtime.hpp"
 #include "test_harness.hpp"
 
 using namespace origami::graphs;
@@ -43,8 +45,8 @@ namespace {
 /** Every atom costs the same, so lane count alone decides the makespan. */
 class flat_cost_t : public cost_model_t {
  public:
-  double node_cost(const wg_node_t&) const override { return 1.0; }
-  double edge_cost(const edge_t&) const override { return 0.0; }
+  double node_cycles(const wg_node_t&) const override { return 1.0; }
+  double edge_cycles(const edge_t&) const override { return 0.0; }
 };
 
 /** Flat, but at a price per graph: stands in for a candidate's own tile cost. */
@@ -52,11 +54,43 @@ class scaled_cost_t : public cost_model_t {
  public:
   explicit scaled_cost_t(double per_node) : per_node_(per_node) {}
 
-  double node_cost(const wg_node_t&) const override { return per_node_; }
-  double edge_cost(const edge_t&) const override { return 0.0; }
+  double node_cycles(const wg_node_t&) const override { return per_node_; }
+  double edge_cycles(const edge_t&) const override { return 0.0; }
 
  private:
   double per_node_;
+};
+
+/** Everything on lane zero, however wide the machine is. */
+class one_lane_placement_t : public placement_t {
+ public:
+  const std::string& name() const override { return name_; }
+  int choose(const placement_context_t&) const override { return 0; }
+
+ private:
+  std::string name_ = "one-lane";
+};
+
+/**
+ * A policy no shipped kind names, so a number it produces could not have come
+ * from the enum instead: canonical issuing order, but every atom pinned to one
+ * lane. Stands in for a caller's own dispatcher — Iris's layout kernel is the
+ * real example, which holds a workgroup on a lane for the whole launch.
+ */
+class one_lane_runtime_t : public runtime_t {
+ public:
+  const std::string& name() const override { return name_; }
+  wg_node_map_t<std::size_t> priority(const wg_graph_t& graph) const override {
+    wg_node_map_t<std::size_t> rank;
+    std::size_t next = 0;
+    for (const wg_node_t& n : graph.nodes()) rank.emplace(n, next++);
+    return rank;
+  }
+  const placement_t& placement() const override { return placement_; }
+
+ private:
+  one_lane_placement_t placement_;
+  std::string name_ = "one-lane";
 };
 
 /** a(4 wgs) -> b(2 wgs). */
@@ -119,7 +153,6 @@ graph_config_t at_lanes(runtime_kind_t kind, int lanes, std::string name = {}) {
   graph_config_t config;
   config.runtime = kind;
   config.lanes   = lanes;
-  config.scale   = 1.0;
   config.name    = std::move(name);
   return config;
 }
@@ -137,8 +170,8 @@ TEST(runtime_kind_names_round_trip) {
                            runtime_kind_t::xcd}) {
     CHECK(runtime_kind_from_name(runtime_kind_name(k)) == k);
   }
-  CHECK(is_continuous(runtime_kind_t::asap) == false);
-  CHECK(is_continuous(runtime_kind_t::xcd) == true);
+  CHECK(needs_cost_model(runtime_kind_t::asap) == false);
+  CHECK(needs_cost_model(runtime_kind_t::xcd) == true);
 
   bool threw = false;
   try {
@@ -161,10 +194,10 @@ TEST(more_lanes_never_lengthen_the_prediction) {
   }
 }
 
-TEST(integer_runtimes_need_no_cost_model_and_continuous_ones_say_so) {
+TEST(flat_priced_kinds_need_no_cost_model_and_the_others_say_so) {
   const graph_t g = fan_in();
 
-  // Counting workgroups needs no hardware, which is the point of the integer
+  // Counting workgroups needs no hardware, which is the point of the flat
   // family: a shape, available before anyone has calibrated anything.
   CHECK(predict_latency(g, at_lanes(runtime_kind_t::asap, 2)) == 3.0);
 
@@ -175,6 +208,23 @@ TEST(integer_runtimes_need_no_cost_model_and_continuous_ones_say_so) {
   CHECK(threw);
 }
 
+TEST(a_makespan_is_reported_in_cycles) {
+  // The unit the whole library answers in: the cost model returns cycles,
+  // simulate() schedules in cycles, and this number is that schedule's makespan
+  // with nothing applied to it. Two producer waves of one cycle over two lanes,
+  // then a consumer, is three — not three microseconds, and not three times
+  // some scale factor.
+  const graph_t g = fan_in();
+  const flat_cost_t cost;
+  CHECK(predict_latency(g, at_lanes(runtime_kind_t::roofline, 2), &cost) == 3.0);
+
+  // wg_duration is the same unit from the other direction: a flat charge in
+  // cycles, so ten cycles an atom is ten times the answer.
+  graph_config_t coarse = at_lanes(runtime_kind_t::asap, 2);
+  coarse.wg_duration    = 10;
+  CHECK(predict_latency(g, coarse) == 30.0);
+}
+
 TEST(breadth_first_is_never_faster_than_asap) {
   const graph_t g = fan_in();
   for (int lanes : {1, 2, 4}) {
@@ -183,19 +233,33 @@ TEST(breadth_first_is_never_faster_than_asap) {
   }
 }
 
-TEST(a_runtime_override_bypasses_the_enum) {
+TEST(a_runtime_override_supplies_the_policy_and_keeps_the_resources) {
   const graph_t g = fan_in();
   const flat_cost_t cost;
 
-  cost_runtime_options_t opts;
-  opts.lanes = 1;
-  opts.scale = 1.0;
+  // The policy's own placement decides where work lands, so a machine eight
+  // lanes wide still runs everything in sequence.
+  graph_config_t pinned   = at_lanes(runtime_kind_t::asap, 8);
+  pinned.runtime_override = std::make_shared<const one_lane_runtime_t>();
+  CHECK(predict_latency(g, pinned, &cost) == 6.0);
 
-  // Every field is ignored in favour of the supplied policy, so a config that
-  // says 8 lanes still predicts the one-lane answer.
-  graph_config_t config   = at_lanes(runtime_kind_t::asap, 8);
-  config.runtime_override = std::make_shared<const roofline_runtime_t>(cost, opts);
-  CHECK(predict_latency(g, config, &cost) == 6.0);
+  // Unlike the seconds-era override this replaces, the rest of the config is
+  // not ignored: a `runtime_t` is a policy and nothing else, so the lane count
+  // still bounds it and the cost model still prices it.
+  graph_config_t narrow   = at_lanes(runtime_kind_t::asap, 1);
+  narrow.runtime_override = std::make_shared<const asap_runtime_t>();
+  CHECK(predict_latency(g, narrow, &cost) == 6.0);
+
+  graph_config_t wide   = at_lanes(runtime_kind_t::asap, 8);
+  wide.runtime_override = std::make_shared<const asap_runtime_t>();
+  CHECK(predict_latency(g, wide, &cost) == 2.0);
+
+  // With no cost model anywhere an override still schedules, charging the flat
+  // wg_duration; a caller's own policy does not require a calibrated machine.
+  graph_config_t unpriced   = at_lanes(runtime_kind_t::asap, 8);
+  unpriced.runtime_override = std::make_shared<const asap_runtime_t>();
+  unpriced.wg_duration      = 3;
+  CHECK(predict_latency(g, unpriced) == 6.0);
 }
 
 // ─── rejection ────────────────────────────────────────────────────────
@@ -220,6 +284,74 @@ TEST(infeasible_candidates_are_rejected_rather_than_thrown) {
   graph_config_t fine = at_lanes(runtime_kind_t::roofline, 4);
   fine.lane_pool      = {{"a", {0, 1}}, {"b", {2, 3}}};
   CHECK(rejection_reason(g, fine).empty());
+}
+
+TEST(an_override_with_no_cost_model_still_needs_a_positive_wg_duration) {
+  // `runtime_override` replaces only the policy, not the cost model beneath
+  // it: `predict_accepted` falls back to `flat_cost_t(config.wg_duration)`
+  // whenever no cost model exists anywhere, override or not. Before the fix
+  // this config was reported feasible (the check lived inside the
+  // `runtime_override == nullptr` guard) and produced a zero makespan.
+  const graph_t g       = fan_in();
+  graph_config_t zero   = at_lanes(runtime_kind_t::asap, 4);
+  zero.runtime_override = std::make_shared<const asap_runtime_t>();
+  zero.wg_duration      = 0;
+  CHECK(rejection_reason(g, zero).find("wg_duration") != std::string::npos);
+  CHECK(predict_latency(g, zero) == kRejectedLatency);
+
+  graph_config_t negative   = at_lanes(runtime_kind_t::asap, 4);
+  negative.runtime_override = std::make_shared<const asap_runtime_t>();
+  negative.wg_duration      = -3;
+  CHECK(rejection_reason(g, negative).find("wg_duration") != std::string::npos);
+  CHECK(predict_latency(g, negative) == kRejectedLatency);
+
+  // The xcd geometry check, by contrast, genuinely is unread once an override
+  // is in play, since `makespan_of`'s xcd arm is never reached: a bad geometry
+  // alongside a valid override and a valid wg_duration stays feasible.
+  graph_config_t fine   = at_lanes(runtime_kind_t::asap, 4);
+  fine.runtime_override = std::make_shared<const asap_runtime_t>();
+  fine.xcd.num_xcds     = 0;
+  CHECK(rejection_reason(g, fine).empty());
+}
+
+TEST(a_lane_pool_partitions_the_machine_between_operations) {
+  // Why the field exists: with the four producers confined to two lanes they
+  // run in two waves, and b#0 — which needs only a#0 and a#1 — starts after the
+  // first wave rather than after both. That staggering is the overlap a
+  // partition buys, and it disappears if the pool is ignored, so the number
+  // below is what says the pool reached the placement.
+  const graph_t g = fan_in();
+  const flat_cost_t cost;
+
+  graph_config_t pooled = at_lanes(runtime_kind_t::roofline, 4);
+  pooled.lane_pool      = {{"a", {0, 1}}, {"b", {2, 3}}};
+
+  // Two producer waves of one cycle, then a consumer: three, against the two
+  // the same four lanes give when every operation may use all of them.
+  CHECK(predict_latency(g, pooled, &cost) == 3.0);
+  CHECK(predict_latency(g, at_lanes(runtime_kind_t::roofline, 4), &cost) == 2.0);
+}
+
+TEST(a_pool_that_clips_empty_against_the_machine_falls_back_to_every_lane) {
+  // `rejection_reason` only rejects an out-of-range pool when `config.lanes`
+  // is set (Minor 1), so with lanes left unset the pool below clips to nothing
+  // against whatever lane count `simulate()` derives, and stays reachable
+  // through ranking. `pooled_placement_t::pooled_placement_t` falls back to
+  // every lane rather than to none, so the candidate schedules exactly as if
+  // no pool had been named at all -- the only thing that used to pin this was
+  // the deleted oracle.
+  const graph_t g = fan_in();
+  const flat_cost_t cost;
+
+  graph_config_t clipped;
+  clipped.runtime   = runtime_kind_t::roofline;
+  clipped.lane_pool = {{"a", {99}}, {"b", {99}}};
+  CHECK(rejection_reason(g, clipped).empty());
+
+  graph_config_t unpooled;
+  unpooled.runtime = runtime_kind_t::roofline;
+
+  CHECK(predict_latency(g, clipped, &cost) == predict_latency(g, unpooled, &cost));
 }
 
 TEST(a_cyclic_graph_is_rejected_by_every_candidate) {
@@ -361,7 +493,7 @@ TEST(an_explicit_cost_model_overrides_every_graphs_own) {
   CHECK(ranked[0].graph_name == "dear");
 }
 
-TEST(a_continuous_candidate_with_no_cost_anywhere_throws) {
+TEST(a_priced_candidate_with_no_cost_anywhere_throws) {
   const graph_t g = fan_in();  // no set_cost
   bool threw      = false;
   try {

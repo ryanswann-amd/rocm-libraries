@@ -29,7 +29,6 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
-#include <map>
 #include <stdexcept>
 #include <vector>
 
@@ -150,13 +149,15 @@ void write_file(const std::string& path, const std::string& body) {
   if (!file) throw std::runtime_error("write_chrome_trace: failed while writing '" + path + "'");
 }
 
-}  // namespace
-
-// ─── continuous-time schedules ────────────────────────────────────────
-
-std::string chrome_trace(const wg_graph_t& graph,
-                         const cost_schedule_t& schedule,
-                         const trace_options_t& options) {
+/**
+ * Shared body for both schedule types. `schedule_t` and `timed_schedule_t`
+ * differ only in the unit their numbers are in; both carry a real lane per
+ * atom, so both render the same way.
+ */
+template <typename ScheduleT>
+std::string chrome_trace_impl(const wg_graph_t& graph,
+                              const ScheduleT& schedule,
+                              const trace_options_t& options) {
   std::string out = open_document();
 
   std::vector<int> lanes;
@@ -193,64 +194,29 @@ std::string chrome_trace(const wg_graph_t& graph,
   return close(std::move(out));
 }
 
+}  // namespace
+
+// ─── real-time schedules ──────────────────────────────────────────────
+
+std::string chrome_trace(const wg_graph_t& graph,
+                         const timed_schedule_t& schedule,
+                         const trace_options_t& options) {
+  return chrome_trace_impl(graph, schedule, options);
+}
+
 void write_chrome_trace(const wg_graph_t& graph,
-                        const cost_schedule_t& schedule,
+                        const timed_schedule_t& schedule,
                         const std::string& path,
                         const trace_options_t& options) {
   write_file(path, chrome_trace(graph, schedule, options));
 }
 
-// ─── integer-timestep schedules ───────────────────────────────────────
+// ─── cycle-based schedules ─────────────────────────────────────────────
 
 std::string chrome_trace(const wg_graph_t& graph,
                          const schedule_t& schedule,
                          const trace_options_t& options) {
-  // An integer runtime models how many atoms may run at once, not which slot
-  // each takes, so a track has to be invented. Atoms are laid out across tracks
-  // in dispatch order within their timestep, which reproduces the shape without
-  // implying an assignment the runtime never made.
-  wg_node_map_t<int> lane;
-  std::map<int, int> next_free;
-  for (const wg_node_t& n : schedule.order) { lane[n] = next_free[schedule.start.at(n)]++; }
-
-  int widest = 0;
-  for (const auto& [when, count] : next_free) {
-    (void)when;
-    widest = std::max(widest, count);
-  }
-
-  std::string out = open_document();
-  std::vector<int> lanes(static_cast<std::size_t>(widest));
-  for (int i = 0; i < widest; ++i) lanes[static_cast<std::size_t>(i)] = i;
-  emit_names(out, options, lanes);
-
-  const double duration = static_cast<double>(schedule.wg_duration) * options.scale;
-  for (const wg_node_t& n : schedule.order) {
-    emit_slice(out,
-               graph,
-               n,
-               lane.at(n),
-               static_cast<double>(schedule.start.at(n)) * options.scale,
-               duration,
-               options.node_arguments);
-  }
-
-  if (options.flow_edges) {
-    std::size_t id = 0;
-    for (const edge_t& e : graph.edges()) {
-      const auto src = schedule.start.find(e.src);
-      const auto dst = schedule.start.find(e.dst);
-      if (src == schedule.start.end() || dst == schedule.start.end()) continue;
-      emit_flow(out,
-                id++,
-                e.allocation,
-                lane.at(e.src),
-                static_cast<double>(schedule.finish(e.src)) * options.scale,
-                lane.at(e.dst),
-                static_cast<double>(dst->second) * options.scale);
-    }
-  }
-  return close(std::move(out));
+  return chrome_trace_impl(graph, schedule, options);
 }
 
 void write_chrome_trace(const wg_graph_t& graph,

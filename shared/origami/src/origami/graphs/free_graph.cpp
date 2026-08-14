@@ -56,6 +56,10 @@ std::string free_graph_t::label_of(const wg_node_t& node) const {
          std::to_string(node.it);
 }
 
+// The single gate through which every externally supplied node passes. Once a
+// node is known in-bounds here, the rest of the class indexes `ops_` without
+// re-checking. `which` names the caller's role so the message says which end of
+// an edge was wrong rather than just that something was.
 void free_graph_t::validate_node(const wg_node_t& node, const char* which) const {
   if (node.op < 0 || node.op >= num_operations()) {
     throw std::invalid_argument(std::string{which} + " references operation index " +
@@ -135,6 +139,9 @@ int free_graph_t::op_index(const std::string& name) const {
   return it->second;
 }
 
+// Absent nodes yield a shared empty vector rather than throwing: having no
+// edges is the normal state of a source or a sink, and returning a reference
+// keeps the schedulers' inner loops allocation-free.
 const std::vector<std::size_t>& free_graph_t::successor_edges(const wg_node_t& node) const {
   const auto it = successors_.find(node);
   return it == successors_.end() ? no_edges() : it->second;

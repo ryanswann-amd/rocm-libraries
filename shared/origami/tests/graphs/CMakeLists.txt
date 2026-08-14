@@ -22,14 +22,18 @@ target_sources(
     origami-graphs-tests
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/test_types.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_symbolic.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_cost_expr.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_cost_model.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_core.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_spec.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_free_graph.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_analysis.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_runtime.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_simulate.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_cost.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/test_cost_runtime.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_ranking.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/test_trace.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_equivalence.cpp"
 )
 
 target_include_directories(origami-graphs-tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

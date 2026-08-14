@@ -26,25 +26,37 @@
 
 /**
  * @file
- * @brief Dumps C++ continuous-time schedules in the format of cost_runtime_oracle.py.
+ * @brief Dumps cost-model-priced schedules in the format of priced_oracle.py.
  *
- * Pricing goes through the library's own roofline arm (cost.hpp), so this
- * comparison validates the shipped cost model rather than a copy of it: if
- * roofline_seconds ever drifts from the reference's cost.py, these numbers move
- * and the diff catches it.
+ * The companion to runtime_dump.cpp, which prices every node identically and so
+ * only compares dispatch order. Here pricing goes through the library's own
+ * roofline arm (cost.hpp), so this comparison validates the shipped cost model
+ * against the reference's cost.py rather than a copy of it: if roofline_cycles
+ * ever drifts from the reference, these numbers move and the diff catches it.
+ *
+ * The reference prices nodes in seconds and displays microseconds, applying its
+ * runtime's `scale` of 1e6 to every duration as it schedules. This library
+ * schedules in cycles and applies both the clock and the scale once, at the end,
+ * through `to_seconds` — the same two multiplications in the same direction,
+ * moved to the boundary. Max and plus commute with a positive scalar, so the
+ * printed values agree to well beyond the six decimals shown.
  */
 
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <optional>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "origami/graphs/core.hpp"
 #include "origami/graphs/cost.hpp"
-#include "origami/graphs/cost_runtime.hpp"
+#include "origami/graphs/placement.hpp"
+#include "origami/graphs/runtime.hpp"
+#include "origami/graphs/simulate.hpp"
 
 using namespace origami::graphs;
 
@@ -105,7 +117,7 @@ std::string fixed6(double v) {
   return std::string(buf);
 }
 
-std::string render(const wg_graph_t& g, const cost_schedule_t& s) {
+std::string render(const wg_graph_t& g, const timed_schedule_t& s) {
   std::string out;
   bool first = true;
   for (const wg_node_t& n : g.nodes()) {
@@ -122,12 +134,26 @@ std::string render(const wg_graph_t& g, const cost_schedule_t& s) {
 int main() {
   const std::vector<case_t (*)()> cases = {gemm_then_reduce, streamed_pair, with_barrier};
 
+  // Only the roofline arm reaches this file, so the clock that turns its cycles
+  // back into time is that arm's own.
+  const fixed_clock_t clock(roofline_hardware_t{}.compute_clock_ghz);
+  constexpr double kMicroseconds = 1e6;  ///< the reference runtimes' own `scale`
+
   for (const auto& make : cases) {
     const case_t c = make();
     cost_table_t cost(c.graph);
     for (const auto& [op, spec] : c.specs) cost.set(op, op_cost_t::from_roofline(spec));
 
-    std::vector<std::pair<std::string, std::unique_ptr<cost_runtime_t>>> configs;
+    const asap_runtime_t asap;
+
+    // Tag, policy, and the machine to run it on. The seconds-era runtimes this
+    // replaces each carried their own lane count and cost model; a policy now
+    // carries neither, so what used to distinguish `roofline` from `event` is a
+    // single simulate option, and what used to distinguish a pooled runtime is
+    // a placement.
+    std::vector<std::tuple<std::string, const runtime_t*, simulate_options_t>> configs;
+    std::vector<std::unique_ptr<runtime_t>> owned;
+
     for (const std::optional<int>& lanes :
          {std::optional<int>{}, std::optional<int>{2}, std::optional<int>{8}}) {
       for (bool ser : {false, true}) {
@@ -135,39 +161,58 @@ int main() {
         const std::string suffix =
             "/lanes=" + lane_str + "/ser=" + (ser ? std::string("True") : std::string("False"));
 
-        cost_runtime_options_t opts;
+        simulate_options_t opts;
         opts.lanes              = lanes;
         opts.serialize_wg_iters = ser;
-        configs.emplace_back("roofline" + suffix, std::make_unique<roofline_runtime_t>(cost, opts));
-        configs.emplace_back("event" + suffix,
-                             std::make_unique<event_driven_runtime_t>(cost, opts));
+        configs.emplace_back("roofline" + suffix, &asap, opts);
+
+        simulate_options_t evt  = opts;
+        evt.reprice_on_dispatch = true;
+        configs.emplace_back("event" + suffix, &asap, evt);
       }
     }
 
-    cost_runtime_options_t pooled;
-    pooled.lanes     = 8;
-    pooled.lane_pool = {{"gemm", {0, 1, 2, 3, 4, 5}},
-                        {"all_reduce", {6, 7}},
-                        {"produce", {0, 1}},
-                        {"consume", {2, 3}},
-                        {"a", {0, 1, 2}},
-                        {"b", {3}}};
-    configs.emplace_back("roofline/pool", std::make_unique<roofline_runtime_t>(cost, pooled));
+    const lane_pool_t pool = {{"gemm", {0, 1, 2, 3, 4, 5}},
+                              {"all_reduce", {6, 7}},
+                              {"produce", {0, 1}},
+                              {"consume", {2, 3}},
+                              {"a", {0, 1, 2}},
+                              {"b", {3}}};
+    simulate_options_t pooled_opts;
+    pooled_opts.lanes = 8;
+    // The same "override the placement, forward everything else" composition
+    // ranking.cpp builds for a `graph_config_t::lane_pool`, via the library's
+    // own adapter rather than a local copy of it; the reference expresses the
+    // same thing as a constructor argument to its roofline runtime. The
+    // placement has to outlive the adapter, so it lives alongside `owned`
+    // rather than inside it.
+    const pooled_placement_t pool_placement(pool, c.graph, 8);
+    owned.push_back(std::make_unique<runtime_with_placement_t>(asap, pool_placement));
+    configs.emplace_back("roofline/pool", owned.back().get(), pooled_opts);
 
-    xcd_options_t small;
-    small.num_xcds    = 2;
-    small.cus_per_xcd = 2;
-    configs.emplace_back("xcd/2x2", std::make_unique<xcd_runtime_t>(cost, small));
-    configs.emplace_back("xcd/8x38", std::make_unique<xcd_runtime_t>(cost, xcd_options_t{}));
+    for (const std::pair<int, int>& geometry : {std::pair<int, int>{2, 2}, {8, 38}}) {
+      auto policy = std::make_unique<xcd_runtime_t>(geometry.first, geometry.second);
+      simulate_options_t opts;
+      // The chiplet placement indexes a whole die's free times, so the machine
+      // has to be exactly as wide as the geometry; `sync` stages are the
+      // zero-work barriers the reference's XCD runtime steps over.
+      opts.lanes       = policy->lane_count();
+      opts.skip_prefix = "sync";
+      const std::string tag =
+          "xcd/" + std::to_string(geometry.first) + "x" + std::to_string(geometry.second);
+      owned.push_back(std::move(policy));
+      configs.emplace_back(tag, owned.back().get(), opts);
+    }
 
-    for (const auto& [tag, rt] : configs) {
-      const cost_schedule_t s = rt->schedule(c.graph);
-      const std::string head  = c.name + "/" + tag;
+    for (const auto& [tag, rt, opts] : configs) {
+      const schedule_t cycles  = simulate(c.graph, *rt, cost, opts);
+      const timed_schedule_t s = to_seconds(cycles, clock, kMicroseconds, "us");
+      const std::string head   = c.name + "/" + tag;
       std::printf("%s makespan=%s lanes=%d util=%s\n",
                   head.c_str(),
                   fixed6(s.makespan()).c_str(),
-                  s.num_lanes(),
-                  fixed6(s.utilization()).c_str());
+                  cycles.num_lanes(),
+                  fixed6(cycles.utilization()).c_str());
       std::printf("%s atoms=%s\n", head.c_str(), render(c.graph, s).c_str());
     }
     std::printf("\n");

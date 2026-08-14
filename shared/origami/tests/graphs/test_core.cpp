@@ -332,15 +332,15 @@ TEST(index_maps_accept_all_three_arities) {
   operation_t consume("consume", 2);
   consume.access_patterns = {
       read(buf,
-           [](int wg, const env_t& env) {
-             return range_t{wg * env.at("B"), 1, 4};
+           [](int wg, const eval_context_t& ctx) {
+             return range_t{wg * ctx.index_at(scope_t::problem, "B"), 1, 4};
            }),
   };
 
   operation_t again("again", 2);
   again.access_patterns = {
       read(buf,
-           [](int wg, int it, const env_t&) {
+           [](int wg, int it, const eval_context_t&) {
              return range_t{wg * 4 + it, 1, 4};
            }),
   };
