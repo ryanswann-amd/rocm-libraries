@@ -38,6 +38,9 @@ catch_discover_tests(origami-tests
 # origami::comm byte-identity suite (header-only, HIP-free).
 add_subdirectory(comm)
 
+# origami::graphs (kirigami) suite (HIP-free).
+add_subdirectory(graphs)
+
 # Install CTestTestfile.cmake for installed Origami tests
 set(_ctest_content [=[
 # Copyright Advanced Micro Devices, Inc., or its affiliates.
